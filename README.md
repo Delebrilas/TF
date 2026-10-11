@@ -43,3 +43,9 @@ Les installateurs Windows / macOS / Linux sont produits par GitHub Actions (`.gi
 ## Usage
 
 Pour un usage personnel, sur des contenus que tu as le droit de télécharger.
+
+
+## BPM
+
+Le BPM est analysé grâce à getsongbpm.com
+Merci à eux !
