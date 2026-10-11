@@ -50,7 +50,7 @@ Test de bout en bout sur un vrai lien :
 TF_E2E_URL="https://www.youtube.com/watch?v=..." cargo test --release --features e2e e2e --manifest-path src-tauri/Cargo.toml -- --nocapture
 ```
 
-L'installateur Windows est produit par GitHub Actions (`.github/workflows/build.yml`) à chaque push sur `main` (onglet Actions).
+L'installateur Windows est produit par GitHub Actions (`.github/workflows/build.yml`) à chaque push sur `main` et publié dans les Releases du dépôt, une par version.
 
 ## Usage
 

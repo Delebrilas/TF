@@ -33,9 +33,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
-          releaseName: "TrackFetcher ${{ github.ref_name }}"
-          releaseDraft: true
+          # Une release publiée par version (tauri.conf.json) : v0.2.0, v0.3.0…
+          tagName: v__VERSION__
+          releaseName: "TrackFetcher v__VERSION__"
+          releaseBody: "Télécharge le fichier `.exe` ci-dessous et lance-le pour installer TrackFetcher sur Windows."
+          releaseDraft: false
+          prerelease: false
 
       - uses: actions/upload-artifact@v4
         with:
