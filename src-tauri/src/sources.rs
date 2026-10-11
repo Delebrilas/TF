@@ -7,11 +7,11 @@
 use crate::tools::{self, Tools};
 use anyhow::{anyhow, Context, Result};
 use regex::Regex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::LazyLock;
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Source {
     Spotify,
@@ -28,6 +28,7 @@ pub struct Meta {
     pub album: Option<String>,
     pub duration: Option<f64>,
     pub cover: Option<String>,
+    pub genre: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -36,6 +37,14 @@ pub struct TrackRequest {
     /// URL passée à yt-dlp. Vide pour Spotify : la recherche YouTube se fait au moment du traitement.
     pub url: String,
     pub meta: Meta,
+    /// Identifiant stable de la piste dans sa playlist (synchro).
+    pub key: String,
+}
+
+pub struct Resolved {
+    /// Nom de la playlist ou de l'album, s'il y en a un.
+    pub title: Option<String>,
+    pub tracks: Vec<TrackRequest>,
 }
 
 pub fn detect(url: &str) -> Source {
@@ -51,6 +60,12 @@ pub fn detect(url: &str) -> Source {
     }
 }
 
+/// Vrai si le lien désigne une collection (playlist, album, set).
+pub fn is_collection(url: &str) -> bool {
+    let u = url.to_lowercase();
+    u.contains("/playlist") || u.contains("/album/") || u.contains("spotify:album:") || u.contains("/sets/") || u.contains("list=")
+}
+
 pub fn http() -> reqwest::Client {
     reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36")
@@ -59,7 +74,7 @@ pub fn http() -> reqwest::Client {
         .expect("client HTTP")
 }
 
-pub async fn resolve(tools: &Tools, url: &str) -> Result<Vec<TrackRequest>> {
+pub async fn resolve(tools: &Tools, url: &str) -> Result<Resolved> {
     match detect(url) {
         Source::Spotify => resolve_spotify(url).await,
         src => resolve_ytdlp(tools, url, src).await,
@@ -77,7 +92,7 @@ pub fn parse_spotify(url: &str) -> Option<(String, String)> {
     Some((c[1].to_string(), c[2].to_string()))
 }
 
-async fn resolve_spotify(url: &str) -> Result<Vec<TrackRequest>> {
+async fn resolve_spotify(url: &str) -> Result<Resolved> {
     let (kind, id) = parse_spotify(url).ok_or_else(|| anyhow!("Lien Spotify non reconnu (piste, album ou playlist)"))?;
     let html = http()
         .get(format!("https://open.spotify.com/embed/{kind}/{id}"))
@@ -100,7 +115,7 @@ fn largest_cover(entity: &Value) -> Option<String> {
         .map(String::from)
 }
 
-pub fn parse_spotify_embed(html: &str, kind: &str) -> Result<Vec<TrackRequest>> {
+pub fn parse_spotify_embed(html: &str, kind: &str) -> Result<Resolved> {
     static NEXT: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r#"(?s)<script id="__NEXT_DATA__" type="application/json">(.*?)</script>"#).unwrap());
     let json = NEXT
@@ -119,27 +134,33 @@ pub fn parse_spotify_embed(html: &str, kind: &str) -> Result<Vec<TrackRequest>> 
             .map(|a| a.iter().filter_map(|x| x["name"].as_str()).collect::<Vec<_>>().join(", "))
             .filter(|s| !s.is_empty())
             .or_else(|| entity["subtitle"].as_str().map(String::from));
-        return Ok(vec![TrackRequest {
+        let key = entity["uri"].as_str().or(entity["id"].as_str()).unwrap_or_default().to_string();
+        return Ok(Resolved { title: None, tracks: vec![TrackRequest {
             source: Source::Spotify,
             url: String::new(),
+            key,
             meta: Meta {
                 title: entity["name"].as_str().or(entity["title"].as_str()).map(String::from),
                 artist: artists,
                 album: None,
                 duration: entity["duration"].as_f64().map(|ms| ms / 1000.0),
                 cover,
+                genre: None,
             },
-        }]);
+        }] });
     }
 
     let album = (kind == "album").then(|| entity["name"].as_str().map(String::from)).flatten();
     let list = entity["trackList"].as_array().ok_or_else(|| anyhow!("Liste de pistes Spotify vide"))?;
-    Ok(list
+    let tracks = list
         .iter()
         .filter(|t| t["isPlayable"].as_bool() != Some(false) || t["title"].is_string())
         .map(|t| TrackRequest {
             source: Source::Spotify,
             url: String::new(),
+            key: t["uri"].as_str().map(String::from).unwrap_or_else(|| {
+                format!("{}|{}", t["subtitle"].as_str().unwrap_or(""), t["title"].as_str().unwrap_or(""))
+            }),
             meta: Meta {
                 title: t["title"].as_str().map(String::from),
                 artist: t["subtitle"].as_str().map(|s| s.replace('\u{a0}', " ")),
@@ -147,9 +168,11 @@ pub fn parse_spotify_embed(html: &str, kind: &str) -> Result<Vec<TrackRequest>> 
                 duration: t["duration"].as_f64().map(|ms| ms / 1000.0),
                 // Les playlists n'exposent qu'une pochette globale : Deezer complétera.
                 cover: if kind == "album" { cover.clone() } else { None },
+                genre: None,
             },
         })
-        .collect())
+        .collect();
+    Ok(Resolved { title: entity["name"].as_str().or(entity["title"].as_str()).map(String::from), tracks })
 }
 
 /// Cherche sur YouTube l'enregistrement correspondant à une piste Spotify.
@@ -222,7 +245,7 @@ fn score_candidate(e: &Value, title: &str, artist: &str, duration: Option<f64>) 
 
 // ---------- YouTube / SoundCloud ----------
 
-async fn resolve_ytdlp(tools: &Tools, url: &str, src: Source) -> Result<Vec<TrackRequest>> {
+async fn resolve_ytdlp(tools: &Tools, url: &str, src: Source) -> Result<Resolved> {
     let out = tools::command(&tools.ytdlp)
         .args(["--flat-playlist", "-J", "--no-playlist", "--no-warnings", url])
         .output()
@@ -236,7 +259,7 @@ async fn resolve_ytdlp(tools: &Tools, url: &str, src: Source) -> Result<Vec<Trac
         if entries.is_empty() {
             return Err(anyhow!("Playlist vide ou privée"));
         }
-        Ok(entries
+        let tracks = entries
             .iter()
             .filter_map(|e| {
                 let u = e["url"].as_str().or(e["webpage_url"].as_str())?;
@@ -245,12 +268,15 @@ async fn resolve_ytdlp(tools: &Tools, url: &str, src: Source) -> Result<Vec<Trac
                 } else {
                     u.to_string()
                 };
-                Some(TrackRequest { source: src, url: u, meta: meta_from_info(e) })
+                let key = e["id"].as_str().map(String::from).unwrap_or_else(|| u.clone());
+                Some(TrackRequest { source: src, url: u, meta: meta_from_info(e), key })
             })
-            .collect())
+            .collect();
+        Ok(Resolved { title: v["title"].as_str().map(String::from), tracks })
     } else {
         let u = v["webpage_url"].as_str().unwrap_or(url).to_string();
-        Ok(vec![TrackRequest { source: src, url: u, meta: meta_from_info(&v) }])
+        let key = v["id"].as_str().map(String::from).unwrap_or_else(|| u.clone());
+        Ok(Resolved { title: None, tracks: vec![TrackRequest { source: src, url: u, meta: meta_from_info(&v), key }] })
     }
 }
 
@@ -287,6 +313,7 @@ pub fn meta_from_info(v: &Value) -> Meta {
         album: v["album"].as_str().map(String::from),
         duration: v["duration"].as_f64(),
         cover: thumbnail(v),
+        genre: v["genre"].as_str().filter(|g| !g.trim().is_empty()).map(|g| g.trim().to_string()),
     }
 }
 
@@ -348,7 +375,10 @@ mod tests {
     #[test]
     fn spotify_embed_playlist() {
         let html = r#"<html><script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"state":{"data":{"entity":{"name":"Mix","trackList":[{"title":"One More Time","subtitle":"Daft Punk","duration":320000,"uri":"spotify:track:x"}]}}}}}}</script></html>"#;
-        let t = parse_spotify_embed(html, "playlist").unwrap();
+        let r = parse_spotify_embed(html, "playlist").unwrap();
+        assert_eq!(r.title.as_deref(), Some("Mix"));
+        assert_eq!(r.tracks[0].key, "spotify:track:x");
+        let t = r.tracks;
         assert_eq!(t[0].meta.title.as_deref(), Some("One More Time"));
         assert_eq!(t[0].meta.artist.as_deref(), Some("Daft Punk"));
         assert_eq!(t[0].meta.duration, Some(320.0));

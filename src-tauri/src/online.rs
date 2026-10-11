@@ -2,11 +2,11 @@
 
 use crate::sources::{http, normalize};
 use regex::Regex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::LazyLock;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceBpm {
     pub source: String,
     pub bpm: f64,
@@ -17,9 +17,17 @@ pub struct DeezerInfo {
     pub bpm: Option<f64>,
     pub album: Option<String>,
     pub cover: Option<String>,
+    pub genre: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default)]
+pub struct ItunesInfo {
+    pub cover: Option<String>,
+    pub genre: Option<String>,
+    pub album: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Verdict {
     /// Analyse locale et sources en ligne d'accord.
@@ -34,7 +42,7 @@ pub enum Verdict {
     Manual,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BpmResult {
     pub bpm: f64,
     pub local: Option<f64>,
@@ -89,13 +97,45 @@ pub async fn deezer(artist: &str, title: &str, duration: Option<f64>) -> Option<
             .await
             .ok()?;
         let bpm = track["bpm"].as_f64().filter(|b| *b > 30.0);
+        let mut genre = None;
+        if let Some(album_id) = track.pointer("/album/id").and_then(Value::as_u64) {
+            if let Ok(r) = client.get(format!("https://api.deezer.com/album/{album_id}")).send().await {
+                if let Ok(album) = r.json::<Value>().await {
+                    genre = album.pointer("/genres/data/0/name").and_then(Value::as_str).map(String::from);
+                }
+            }
+        }
         return Some(DeezerInfo {
             bpm,
             album: track.pointer("/album/title").and_then(Value::as_str).map(String::from),
             cover: track.pointer("/album/cover_xl").and_then(Value::as_str).map(String::from),
+            genre,
         });
     }
     None
+}
+
+/// iTunes Search : pochette 1400 px et genre, sans clé.
+pub async fn itunes(artist: &str, title: &str, duration: Option<f64>) -> Option<ItunesInfo> {
+    let a = first_artist(artist);
+    let t = base_title(title);
+    let url = format!(
+        "https://itunes.apple.com/search?media=music&entity=song&limit=10&term={}",
+        urlencoding::encode(&format!("{a} {t}"))
+    );
+    let v: Value = http().get(url).send().await.ok()?.json().await.ok()?;
+    let hit = v["results"].as_array()?.iter().find(|r| {
+        let dur_ok = match (duration, r["trackTimeMillis"].as_f64()) {
+            (Some(d), Some(ms)) => (d - ms / 1000.0).abs() <= 10.0,
+            _ => true,
+        };
+        similar(r["trackName"].as_str().unwrap_or(""), &t) && similar(r["artistName"].as_str().unwrap_or(""), &a) && dur_ok
+    })?;
+    Some(ItunesInfo {
+        cover: hit["artworkUrl100"].as_str().map(|u| u.replace("100x100bb", "1400x1400bb")),
+        genre: hit["primaryGenreName"].as_str().map(String::from),
+        album: hit["collectionName"].as_str().map(String::from),
+    })
 }
 
 /// GetSongBPM (clé gratuite sur getsongbpm.com/api).

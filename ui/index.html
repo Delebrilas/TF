@@ -4,13 +4,14 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>TrackFetcher</title>
+  <script src="theme-init.js"></script>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
-    <symbol id="i-spotify" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm4.6 14.4a.62.62 0 0 1-.86.2c-2.35-1.43-5.3-1.76-8.79-.96a.62.62 0 1 1-.28-1.21c3.81-.87 7.08-.5 9.72 1.11.3.18.39.57.21.86Zm1.22-2.72a.78.78 0 0 1-1.07.26c-2.69-1.65-6.8-2.13-9.98-1.17a.78.78 0 1 1-.45-1.49c3.64-1.1 8.16-.57 11.24 1.33.37.22.48.7.26 1.07Zm.1-2.84C14.7 8.93 9.38 8.75 6.3 9.69a.94.94 0 1 1-.54-1.8c3.53-1.07 9.4-.86 13.12 1.34a.94.94 0 0 1-.96 1.61Z"/></symbol>
+    <symbol id="i-spotify" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm4.6 14.4a.62.62 0 0 1-.86.2c-2.35-1.43-5.3-1.76-8.79-.96a.62.62 0 1 1-.28-1.21c3.81-.87 7.08-.5 9.72 1.11.3.18.39.57.21.86Zm1.22-2.72a.78.78 0 0 1-1.07.26c-2.690-1.650-6.8-2.130-9.98-1.170a.78.78 0 1 1-.45-1.49c3.64-1.1 8.16-.57 11.24 1.33.37.22.48.7.26 1.07Zm.1-2.84C14.7 8.93 9.38 8.75 6.3 9.69a.94.94 0 1 1-.54-1.8c3.53-1.07 9.4-.86 13.12 1.34a.94.94 0 0 1-.96 1.61Z"/></symbol>
     <symbol id="i-youtube" viewBox="0 0 24 24"><path fill="currentColor" d="M23 7.2a3 3 0 0 0-2.1-2.1C19 4.6 12 4.6 12 4.6s-7 0-8.9.5A3 3 0 0 0 1 7.2 31 31 0 0 0 .5 12a31 31 0 0 0 .5 4.8 3 3 0 0 0 2.1 2.1c1.9.5 8.9.5 8.9.5s7 0 8.9-.5a3 3 0 0 0 2.1-2.1c.4-1.6.5-3.2.5-4.8s-.1-3.2-.5-4.8ZM9.8 15.1V8.9l5.8 3.1-5.8 3.1Z"/></symbol>
-    <symbol id="i-soundcloud" viewBox="0 0 24 24"><path fill="currentColor" d="M11.6 7.3c-.5 0-1 .1-1.4.3v9.6h8.9a3.4 3.4 0 0 0 0-6.8c-.4 0-.8.1-1.2.2a5.4 5.4 0 0 0-6.3-3.3ZM9.3 8.1v9.1h-.6V8.6l.6-.5Zm-1.5 1v8.1h-.6V9.4l.6-.3Zm-1.5.7v7.4h-.6V10l.6-.2Zm-1.5.6v6.8h-.6v-6.7h.6Zm-1.5.9v5.9h-.6v-5.8l.6-.1Zm-1.5 1.1v3.7h-.6v-3.5l.6-.2Z"/></symbol>
+    <symbol id="i-soundcloud" viewBox="0 0 24 24"><path fill="currentColor" d="M11.6 7.3c-.5 0-1 .1-1.4.3v9.6h8.9a3.4 3.4 0 0 0 0-6.8c-.4 0-.8.1-1.2.2a5.4 5.4 0 0 0-6.3-3.3ZM9.3 8.1v9.1h-.6V8.6l.6-.5Zm-1.5 1v8.1h-.6V9.4l.6-.3Zm-1.5.7v7.4h-.6V10l.6-.2Zm-1.5.6v6.8h-.6v-6.7h.6Zm-1.5.9v5.900h-.6v-5.8l.6-.1Zm-1.5 1.1v3.7h-.6v-3.5l.6-.2Z"/></symbol>
     <symbol id="i-link" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
     <symbol id="i-file" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M9 18V5l11-2v13M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm11-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/></symbol>
     <symbol id="i-gear" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></symbol>
@@ -19,6 +20,21 @@
     <symbol id="i-retry" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3 12a9 9 0 0 1 15.5-6.2L21 8M21 3v5h-5M21 12a9 9 0 0 1-15.5 6.2L3 16M3 21v-5h5"/></symbol>
     <symbol id="i-arrow" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M12 4v12m0 0-5-5m5 5 5-5M5 20h14"/></symbol>
     <symbol id="i-note" viewBox="0 0 24 24"><path fill="currentColor" d="M9 17.5V6.2l10-2v10.3a2.5 2.5 0 1 1-1.6-2.3V7.6l-6.8 1.4v8.5a2.5 2.5 0 1 1-1.6-0Z"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path fill="currentColor" d="M8 5.1v13.8a1 1 0 0 0 1.5.9l11-6.9a1 1 0 0 0 0-1.7l-11-6.9A1 1 0 0 0 8 5.1Z"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="4.5" width="4" height="15" rx="1.2" fill="currentColor"/><rect x="14" y="4.5" width="4" height="15" rx="1.2" fill="currentColor"/></symbol>
+    <symbol id="i-prev" viewBox="0 0 24 24"><path fill="currentColor" d="M6 5h2v14H6zM19 5.5v13a.8.8 0 0 1-1.2.7L9.5 12.7a.8.8 0 0 1 0-1.4l8.3-6.5a.8.8 0 0 1 1.2.7Z"/></symbol>
+    <symbol id="i-next" viewBox="0 0 24 24"><path fill="currentColor" d="M16 5h2v14h-2zM5 5.5v13a.8.8 0 0 0 1.2.7l8.3-6.5a.8.8 0 0 0 0-1.4L6.2 4.8A.8.8 0 0 0 5 5.5Z"/></symbol>
+    <symbol id="i-shuffle" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></symbol>
+    <symbol id="i-repeat" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="m17 2 4 4-4 4M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4M21 13v2a3 3 0 0 1-3 3H3"/></symbol>
+    <symbol id="i-volume" viewBox="0 0 24 24"><path fill="currentColor" d="M3 9v6h4l5 4V5L7 9H3Z"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M16 8.5a5 5 0 0 1 0 7M18.8 6a8.5 8.5 0 0 1 0 12"/></symbol>
+    <symbol id="i-mute" viewBox="0 0 24 24"><path fill="currentColor" d="M3 9v6h4l5 4V5L7 9H3Z"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="m16 9 6 6m0-6-6 6"/></symbol>
+    <symbol id="i-expand" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M12 19V5m-6 6 6-6 6 6"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="m20 20-3.5-3.5"/></symbol>
   </svg>
 
   <header class="topbar">
@@ -26,14 +42,20 @@
       <img src="logo.svg" alt="" width="28" height="28" />
       <span>TrackFetcher</span>
     </div>
+    <nav class="tabs" id="tabs">
+      <button data-view="queue" class="on">File <span class="badge" id="badge-queue"></span></button>
+      <button data-view="library">Bibliothèque</button>
+      <button data-view="watch">Playlists suivies <span class="badge" id="badge-watch"></span></button>
+    </nav>
     <div class="top-actions">
-      <button class="ghost" id="btn-files" title="Analyser le BPM de MP3 existants"><svg><use href="#i-file"/></svg><span>Analyser des MP3</span></button>
-      <button class="ghost" id="btn-folder" title="Ouvrir le dossier de sortie"><svg><use href="#i-folder"/></svg><span>Dossier</span></button>
+      <button class="icon" id="btn-files" title="Analyser le BPM de MP3 existants"><svg><use href="#i-file"/></svg></button>
+      <button class="icon" id="btn-folder" title="Ouvrir le dossier de sortie"><svg><use href="#i-folder"/></svg></button>
+      <button class="icon" id="btn-theme" title="Mode clair / sombre"><svg><use href="#i-moon"/></svg></button>
       <button class="icon" id="btn-settings" title="Réglages"><svg><use href="#i-gear"/></svg></button>
     </div>
   </header>
 
-  <main>
+  <main id="main">
     <section class="setup hidden" id="setup">
       <div>
         <h2>Encore une étape</h2>
@@ -45,22 +67,138 @@
 
     <form class="omnibox" id="omnibox" autocomplete="off">
       <span class="src-icon" id="src-icon"><svg><use href="#i-link"/></svg></span>
-      <input id="url" type="text" spellcheck="false" placeholder="Colle un lien Spotify, YouTube ou SoundCloud (piste, album ou playlist)" />
+      <input id="url" type="text" spellcheck="false" placeholder="Colle ou glisse un lien Spotify, YouTube ou SoundCloud" />
+      <div class="follow-wrap hidden" id="follow-wrap">
+        <button class="ghost" type="button" id="btn-follow" title="Suivre cette playlist et télécharger les nouveautés"><svg><use href="#i-eye"/></svg><span>Suivre</span></button>
+        <div class="menu" id="follow-menu">
+          <button type="button" data-existing="1"><b>Suivre et tout télécharger</b><small>Les morceaux actuels, puis chaque nouveauté</small></button>
+          <button type="button" data-existing="0"><b>Seulement les nouveautés</b><small>Ignore les morceaux déjà présents</small></button>
+        </div>
+      </div>
       <button class="primary" id="btn-add" type="submit"><svg><use href="#i-arrow"/></svg><span>Télécharger</span></button>
     </form>
 
-    <div class="queue-head">
-      <h3>File d'attente <span id="count" class="muted"></span></h3>
-      <button class="link" id="btn-clear">Retirer les terminés</button>
-    </div>
+    <!-- File d'attente -->
+    <section class="view" id="view-queue">
+      <div class="view-head">
+        <h3>File d'attente <span id="count" class="muted"></span></h3>
+        <div class="head-actions">
+          <button class="link" id="btn-pause">Mettre en pause</button>
+          <button class="link" id="btn-clear">Retirer les terminés</button>
+        </div>
+      </div>
+      <ul class="queue" id="queue"></ul>
+      <div class="empty" id="empty">
+        <div class="eq"><i></i><i></i><i></i><i></i><i></i></div>
+        <p>Colle ou glisse un lien pour commencer.<br><span class="muted">Le BPM est détecté, vérifié en ligne puis écrit dans le fichier.</span></p>
+      </div>
+    </section>
 
-    <ul class="queue" id="queue"></ul>
+    <!-- Bibliothèque -->
+    <section class="view hidden" id="view-library">
+      <div class="lib-layout">
+        <aside class="lib-side">
+          <div class="side-title">Playlists <span class="muted">par dossier</span></div>
+          <ul id="lib-folders"></ul>
+          <button class="link add-folder" id="lib-add-folder">+ Ajouter un dossier</button>
+        </aside>
+        <div class="lib-main">
+          <div class="view-head">
+            <h3><span id="lib-name">Toute la bibliothèque</span> <span id="lib-count" class="muted"></span></h3>
+            <div class="lib-tools">
+              <label class="search"><svg><use href="#i-search"/></svg><input id="lib-search" type="text" placeholder="Titre, artiste, genre, BPM…" /></label>
+              <select id="lib-sort" title="Trier par">
+                <option value="added">Ajouts récents</option>
+                <option value="title">Titre</option>
+                <option value="artist">Artiste</option>
+                <option value="album">Album</option>
+                <option value="bpm">BPM</option>
+                <option value="genre">Genre</option>
+              </select>
+              <button class="icon" id="lib-dir" title="Inverser l'ordre">↓</button>
+              <button class="primary small" id="lib-play"><svg><use href="#i-play"/></svg><span>Lire</span></button>
+            </div>
+          </div>
+          <div class="lib-table" id="lib-table">
+            <div class="lib-row lib-header">
+              <span></span>
+              <button data-sort="title">Titre</button>
+              <button data-sort="album">Album</button>
+              <button data-sort="genre">Genre</button>
+              <button data-sort="bpm" class="r">BPM</button>
+            </div>
+            <div id="lib-rows"></div>
+          </div>
+          <div class="empty hidden" id="lib-empty"><p>Aucun MP3 ici pour l'instant.</p></div>
+        </div>
+      </div>
+    </section>
 
-    <div class="empty" id="empty">
-      <div class="eq"><i></i><i></i><i></i><i></i><i></i></div>
-      <p>Colle un lien pour commencer.<br><span class="muted">Le BPM est détecté, vérifié en ligne puis écrit dans le fichier.</span></p>
-    </div>
+    <!-- Playlists suivies -->
+    <section class="view hidden" id="view-watch">
+      <div class="view-head">
+        <h3>Playlists suivies</h3>
+        <div class="head-actions">
+          <span class="muted small" id="watch-interval-label"></span>
+          <button class="link" id="btn-check-all">Vérifier maintenant</button>
+        </div>
+      </div>
+      <ul class="watch-list" id="watch-list"></ul>
+      <div class="empty" id="watch-empty">
+        <p>Aucune playlist suivie.<br><span class="muted">Colle le lien d'une playlist Spotify ou SoundCloud, puis clique sur « Suivre ». Les nouveaux morceaux seront téléchargés automatiquement tant que l'app est ouverte.</span></p>
+      </div>
+    </section>
   </main>
+
+  <!-- Lecteur -->
+  <footer class="player hidden" id="player">
+    <div class="p-track">
+      <div class="p-cover" id="p-cover"><svg><use href="#i-note"/></svg><img alt="" /></div>
+      <div class="p-meta">
+        <div class="p-title" id="p-title"></div>
+        <div class="p-artist" id="p-artist"></div>
+      </div>
+      <span class="p-bpm" id="p-bpm"></span>
+    </div>
+    <div class="p-center">
+      <div class="p-controls">
+        <button class="icon sm" id="p-shuffle" title="Aléatoire"><svg><use href="#i-shuffle"/></svg></button>
+        <button class="icon" id="p-prev" title="Précédent"><svg><use href="#i-prev"/></svg></button>
+        <button class="play" id="p-play" title="Lecture / pause (Espace)"><svg><use href="#i-play"/></svg></button>
+        <button class="icon" id="p-next" title="Suivant"><svg><use href="#i-next"/></svg></button>
+        <button class="icon sm" id="p-repeat" title="Répéter"><svg><use href="#i-repeat"/></svg></button>
+      </div>
+      <div class="p-seek">
+        <span id="p-time">0:00</span>
+        <input type="range" id="p-pos" min="0" max="1000" value="0" />
+        <span id="p-dur">0:00</span>
+      </div>
+    </div>
+    <div class="p-right">
+      <canvas id="p-viz" width="120" height="32"></canvas>
+      <button class="icon sm" id="p-mute" title="Muet"><svg><use href="#i-volume"/></svg></button>
+      <input type="range" id="p-vol" min="0" max="100" value="80" />
+      <button class="icon sm" id="p-expand" title="Visualiseur plein écran"><svg><use href="#i-expand"/></svg></button>
+    </div>
+  </footer>
+
+  <!-- Écran « En lecture » avec visualiseur -->
+  <div class="np hidden" id="np">
+    <div class="np-bg" id="np-bg"></div>
+    <canvas id="np-viz"></canvas>
+    <button class="icon np-close" id="np-close" title="Réduire"><svg><use href="#i-down"/></svg></button>
+    <div class="np-center">
+      <div class="np-cover" id="np-cover"><svg><use href="#i-note"/></svg><img alt="" /></div>
+      <div class="np-title" id="np-title"></div>
+      <div class="np-artist" id="np-artist"></div>
+      <div class="np-bpm" id="np-bpm"></div>
+    </div>
+    <div class="np-modes" id="np-modes">
+      <button data-mode="radial" class="on">Radial</button>
+      <button data-mode="bars">Barres</button>
+      <button data-mode="wave">Onde</button>
+    </div>
+  </div>
 
   <aside class="drawer" id="drawer" aria-hidden="true">
     <div class="drawer-panel">
@@ -69,13 +207,47 @@
         <button class="icon" id="btn-close-settings" title="Fermer"><svg><use href="#i-x"/></svg></button>
       </div>
 
-      <label class="field">
+      <div class="field">
+        <span>Thème</span>
+        <div class="segmented" id="s-theme">
+          <button data-v="system">Système</button>
+          <button data-v="light">Clair</button>
+          <button data-v="dark">Sombre</button>
+        </div>
+      </div>
+
+      <div class="field">
         <span>Dossier de sortie</span>
         <div class="row">
           <input id="s-dir" type="text" readonly />
           <button class="ghost" id="s-dir-pick">Choisir…</button>
         </div>
-      </label>
+      </div>
+
+      <div class="field">
+        <span>Nom des fichiers</span>
+        <input id="s-template" type="text" spellcheck="false" />
+        <div class="chips" id="s-tokens">
+          <button data-t="{artist}">Artiste</button>
+          <button data-t="{title}">Titre</button>
+          <button data-t="{album}">Album</button>
+          <button data-t="{bpm}">BPM</button>
+          <button data-t="{genre}">Genre</button>
+          <button data-t="{key}" title="Tonalité : prévue dans une prochaine version">Clé</button>
+        </div>
+        <small class="preview" id="s-preview"></small>
+      </div>
+
+      <div class="field">
+        <span>Ranger dans des dossiers</span>
+        <div class="segmented" id="s-sort">
+          <button data-v="none">Non</button>
+          <button data-v="bpm">BPM</button>
+          <button data-v="genre">Genre</button>
+          <button data-v="genre_bpm">Genre › BPM</button>
+        </div>
+        <small class="muted" id="s-sort-hint"></small>
+      </div>
 
       <div class="field">
         <span>Qualité MP3</span>
@@ -93,34 +265,42 @@
         </div>
       </div>
 
-      <label class="toggle">
-        <input type="checkbox" id="s-verify" />
-        <span class="switch"></span>
-        <span><b>Vérifier le BPM en ligne</b><small>Compare l'analyse avec Deezer, GetSongBPM et la description.</small></span>
-      </label>
+      <div class="field">
+        <span>Vérifier les playlists suivies</span>
+        <div class="segmented" id="s-interval">
+          <button data-v="15">15 min</button><button data-v="60">1 h</button><button data-v="360">6 h</button><button data-v="1440">1 jour</button>
+        </div>
+      </div>
 
-      <label class="field">
+      <div class="toggle">
+        <button type="button" class="switch" role="switch" id="s-verify" aria-checked="false"></button>
+        <span><b>Vérifier le BPM en ligne</b><small>Compare l'analyse avec Deezer, GetSongBPM et la description.</small></span>
+      </div>
+
+      <div class="toggle">
+        <button type="button" class="switch" role="switch" id="s-hdcover" aria-checked="false"></button>
+        <span><b>Pochette haute définition</b><small>Remplace la miniature par la pochette officielle iTunes (1400 px) ou Deezer.</small></span>
+      </div>
+
+      <div class="field">
         <span>Clé API GetSongBPM <small class="muted">(facultative, gratuite sur getsongbpm.com/api)</small></span>
         <input id="s-key" type="text" spellcheck="false" placeholder="Non renseignée" />
-      </label>
-
-      <label class="toggle">
-        <input type="checkbox" id="s-bpmname" />
-        <span class="switch"></span>
-        <span><b>BPM dans le nom de fichier</b><small>Exemple : Artiste - Titre (128 BPM).mp3</small></span>
-      </label>
+      </div>
     </div>
   </aside>
 
+  <div class="drop-overlay" id="drop-overlay"><div>Dépose ici un lien ou des MP3</div></div>
   <div class="toasts" id="toasts"></div>
+  <audio id="audio" preload="metadata"></audio>
 
   <template id="tpl-job">
     <li class="job">
-      <div class="cover"><svg><use href="#i-note"/></svg><img alt="" /></div>
+      <div class="cover"><svg><use href="#i-note"/></svg><img alt="" /><span class="cover-play"><svg><use href="#i-play"/></svg></span></div>
       <div class="meta">
         <div class="title"></div>
         <div class="sub"><svg class="src"><use href=""/></svg><span class="artist"></span></div>
         <div class="state"><span class="status"></span><div class="bar"><i></i></div></div>
+        <div class="diverge hidden"><span></span><button class="apply"></button></div>
       </div>
       <div class="bpm" tabindex="0">
         <div class="value"></div>
@@ -128,6 +308,7 @@
         <div class="details"></div>
       </div>
       <div class="actions">
+        <button class="icon act-priority" title="Passer en priorité"><svg><use href="#i-up"/></svg></button>
         <button class="icon act-reveal" title="Afficher dans le dossier"><svg><use href="#i-folder"/></svg></button>
         <button class="icon act-retry" title="Réessayer"><svg><use href="#i-retry"/></svg></button>
         <button class="icon act-remove" title="Retirer"><svg><use href="#i-x"/></svg></button>

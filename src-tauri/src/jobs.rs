@@ -1,4 +1,8 @@
 //! File d'attente : téléchargement → analyse → vérification → tags → rangement.
+//!
+//! L'ordonnanceur prend les pistes en attente par priorité puis par ordre
+//! d'arrivée. La file est enregistrée sur disque : après une fermeture ou une
+//! coupure, les pistes inachevées reprennent au lancement suivant.
 
 use crate::{
     bpm,
@@ -9,22 +13,27 @@ use crate::{
     tools::{self, Tools},
 };
 use anyhow::{anyhow, Result};
-use serde::Serialize;
+use regex::Regex;
+use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex,
+        Arc, LazyLock, Mutex,
     },
+    time::{Duration, Instant},
 };
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, BufReader},
-    sync::{Notify, Semaphore},
+    sync::Notify,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+/// Nombre de nouvelles tentatives automatiques après une erreur réseau.
+const MAX_AUTO_RETRIES: u32 = 3;
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
     Queued,
@@ -38,7 +47,7 @@ pub enum Status {
     Error,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Job {
     pub id: u64,
     pub source: Source,
@@ -48,50 +57,48 @@ pub struct Job {
     pub album: Option<String>,
     pub cover: Option<String>,
     pub duration: Option<f64>,
+    #[serde(default)]
+    pub genre: Option<String>,
     pub status: Status,
     pub progress: f64,
     pub path: Option<String>,
     pub bpm: Option<BpmResult>,
     pub error: Option<String>,
+    /// Message d'information (nouvelle tentative, etc.).
+    #[serde(default)]
+    pub note: Option<String>,
+    #[serde(default)]
+    pub priority: bool,
+    /// Ordre d'arrivée.
+    #[serde(default)]
+    pub seq: u64,
+    #[serde(default)]
+    pub attempts: u32,
+    /// BPM déjà présent dans le fichier quand l'analyse donne autre chose :
+    /// le tag n'est pas modifié tant que l'utilisateur n'a pas appliqué.
+    #[serde(default)]
+    pub existing_bpm: Option<f64>,
+    #[serde(skip)]
+    not_before: Option<Instant>,
 }
 
 pub struct AppState {
     pub jobs: Mutex<Vec<Job>>,
     pub settings: Mutex<Settings>,
     cancels: Mutex<HashMap<u64, Arc<Notify>>>,
-    semaphore: Arc<Semaphore>,
-    permits: Mutex<usize>,
+    running: Mutex<HashSet<u64>>,
     next_id: AtomicU64,
 }
 
 impl AppState {
     pub fn new(settings: Settings) -> Self {
-        let n = settings.parallel;
         Self {
             jobs: Mutex::new(Vec::new()),
             settings: Mutex::new(settings),
             cancels: Mutex::new(HashMap::new()),
-            semaphore: Arc::new(Semaphore::new(n)),
-            permits: Mutex::new(n),
+            running: Mutex::new(HashSet::new()),
             next_id: AtomicU64::new(1),
         }
-    }
-
-    /// Ajuste le nombre de traitements simultanés.
-    pub fn set_parallel(&self, n: usize) {
-        let mut cur = self.permits.lock().unwrap();
-        if n > *cur {
-            self.semaphore.add_permits(n - *cur);
-        } else if n < *cur {
-            let sem = self.semaphore.clone();
-            let diff = (*cur - n) as u32;
-            tauri::async_runtime::spawn(async move {
-                if let Ok(p) = sem.acquire_many(diff).await {
-                    p.forget();
-                }
-            });
-        }
-        *cur = n;
     }
 }
 
@@ -121,6 +128,55 @@ fn alive<R: tauri::Runtime>(app: &AppHandle<R>, id: u64) -> Result<Job> {
     jobs.iter().find(|j| j.id == id).cloned().ok_or_else(|| anyhow!("annulé"))
 }
 
+// ---------- Persistance ----------
+
+fn queue_file<R: tauri::Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
+    app.path().app_data_dir().ok().map(|d| d.join("queue.json"))
+}
+
+/// Enregistre les pistes inachevées (en attente, en cours, en erreur).
+pub fn persist<R: tauri::Runtime>(app: &AppHandle<R>) {
+    let Some(file) = queue_file(app) else { return };
+    let pending: Vec<Job> = state(app)
+        .jobs
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|j| j.status != Status::Done)
+        .cloned()
+        .collect();
+    if let Some(d) = file.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    if let Ok(json) = serde_json::to_string(&pending) {
+        let tmp = file.with_extension("tmp");
+        if std::fs::write(&tmp, json).is_ok() {
+            let _ = std::fs::rename(tmp, file);
+        }
+    }
+}
+
+/// Recharge la file au démarrage : ce qui était en cours repart en attente.
+pub fn restore<R: tauri::Runtime>(app: &AppHandle<R>) {
+    let Some(file) = queue_file(app) else { return };
+    let Ok(text) = std::fs::read_to_string(file) else { return };
+    let Ok(mut saved) = serde_json::from_str::<Vec<Job>>(&text) else { return };
+    let st = state(app);
+    let mut max_id = 0;
+    for j in saved.iter_mut() {
+        max_id = max_id.max(j.id);
+        if j.status != Status::Error {
+            j.status = Status::Queued;
+            j.progress = 0.0;
+            j.note = Some("Reprise après fermeture".into());
+        }
+    }
+    st.next_id.store(max_id + 1, Ordering::SeqCst);
+    *st.jobs.lock().unwrap() = saved;
+}
+
+// ---------- Ordonnanceur ----------
+
 pub fn enqueue<R: tauri::Runtime>(app: &AppHandle<R>, source: Source, url: String, meta: Meta, path: Option<String>) -> Job {
     let st = state(app);
     let id = st.next_id.fetch_add(1, Ordering::SeqCst);
@@ -133,39 +189,110 @@ pub fn enqueue<R: tauri::Runtime>(app: &AppHandle<R>, source: Source, url: Strin
         album: meta.album,
         cover: meta.cover,
         duration: meta.duration,
+        genre: meta.genre,
         status: Status::Queued,
         progress: 0.0,
         path,
         bpm: None,
         error: None,
+        note: None,
+        priority: false,
+        seq: id,
+        attempts: 0,
+        existing_bpm: None,
+        not_before: None,
     };
     st.jobs.lock().unwrap().push(job.clone());
     emit(app, &job);
-    start(app, id);
     job
 }
 
-pub fn start<R: tauri::Runtime>(app: &AppHandle<R>, id: u64) {
+/// Lance autant de pistes que le permet le réglage « simultanés ».
+pub fn pump<R: tauri::Runtime>(app: &AppHandle<R>) {
+    let st = state(app);
+    let (parallel, paused) = {
+        let s = st.settings.lock().unwrap();
+        (s.parallel, s.paused)
+    };
+    let mut to_start = Vec::new();
+    {
+        let jobs = st.jobs.lock().unwrap();
+        let mut running = st.running.lock().unwrap();
+        let now = Instant::now();
+        let mut queued: Vec<&Job> = jobs
+            .iter()
+            .filter(|j| j.status == Status::Queued && !running.contains(&j.id))
+            .filter(|j| j.not_before.is_none_or(|t| t <= now))
+            .collect();
+        queued.sort_by_key(|j| (!j.priority, j.seq));
+        for j in queued {
+            if paused || running.len() >= parallel {
+                break;
+            }
+            running.insert(j.id);
+            to_start.push(j.id);
+        }
+    }
+    for id in to_start {
+        spawn_job(app, id);
+    }
+    persist(app);
+}
+
+fn spawn_job<R: tauri::Runtime>(app: &AppHandle<R>, id: u64) {
     let app = app.clone();
     let cancel = Arc::new(Notify::new());
     state(&app).cancels.lock().unwrap().insert(id, cancel.clone());
     tauri::async_runtime::spawn(async move {
-        let sem = state(&app).semaphore.clone();
-        let Ok(_permit) = sem.acquire_owned().await else { return };
-        if alive(&app, id).is_err() {
-            return;
-        }
-        if let Err(e) = run(&app, id, cancel).await {
+        let outcome = run(&app, id, cancel).await;
+        state(&app).cancels.lock().unwrap().remove(&id);
+        state(&app).running.lock().unwrap().remove(&id);
+        if let Err(e) = outcome {
             let msg = e.to_string();
             if msg != "annulé" {
-                update(&app, id, |j| {
-                    j.status = Status::Error;
-                    j.error = Some(msg);
-                });
+                fail(&app, id, msg);
             }
         }
-        state(&app).cancels.lock().unwrap().remove(&id);
+        pump(&app);
     });
+}
+
+fn is_network_error(msg: &str) -> bool {
+    let m = msg.to_lowercase();
+    [
+        "timed out", "timeout", "connection", "network", "temporarily", "getaddrinfo", "resolve host",
+        "http error 5", "remote end closed", "reset by peer", "unreachable", "eof occurred", "incomplete read",
+    ]
+    .iter()
+    .any(|k| m.contains(k))
+}
+
+/// Erreur : nouvelle tentative différée si c'est une coupure réseau.
+fn fail<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, msg: String) {
+    let retry = is_network_error(&msg);
+    let mut delay = None;
+    update(app, id, |j| {
+        if retry && j.attempts < MAX_AUTO_RETRIES {
+            j.attempts += 1;
+            let secs = 15u64 * (1 << (j.attempts - 1));
+            j.status = Status::Queued;
+            j.progress = 0.0;
+            j.note = Some(format!("Connexion perdue, nouvelle tentative dans {secs} s ({}/{MAX_AUTO_RETRIES})", j.attempts));
+            j.not_before = Some(Instant::now() + Duration::from_secs(secs));
+            delay = Some(secs);
+        } else {
+            j.status = Status::Error;
+            j.error = Some(msg);
+            j.note = None;
+        }
+    });
+    if let Some(secs) = delay {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(secs)).await;
+            pump(&app);
+        });
+    }
 }
 
 pub fn cancel<R: tauri::Runtime>(app: &AppHandle<R>, id: u64) {
@@ -174,13 +301,36 @@ pub fn cancel<R: tauri::Runtime>(app: &AppHandle<R>, id: u64) {
     }
 }
 
+/// Bascule la priorité d'une piste en attente.
+pub fn toggle_priority<R: tauri::Runtime>(app: &AppHandle<R>, id: u64) {
+    update(app, id, |j| j.priority = !j.priority);
+    pump(app);
+}
+
+pub fn retry<R: tauri::Runtime>(app: &AppHandle<R>, id: u64) {
+    update(app, id, |j| {
+        if j.status == Status::Error {
+            j.status = Status::Queued;
+            j.error = None;
+            j.note = None;
+            j.progress = 0.0;
+            j.attempts = 0;
+            j.not_before = None;
+        }
+    });
+    pump(app);
+}
+
 fn set_status<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, s: Status) -> Result<Job> {
     update(app, id, |j| {
         j.status = s;
         j.progress = 0.0;
+        j.note = None;
     })
     .ok_or_else(|| anyhow!("annulé"))
 }
+
+// ---------- Traitement d'une piste ----------
 
 async fn run<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, cancel: Arc<Notify>) -> Result<()> {
     let job = alive(app, id)?;
@@ -192,7 +342,7 @@ async fn run<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, cancel: Arc<Notify>
     } else {
         let tools = tools::require(app)?;
         let mut url = job.url.clone();
-        if job.source == Source::Spotify {
+        if job.source == Source::Spotify && url.is_empty() {
             set_status(app, id, Status::Searching)?;
             let meta = Meta {
                 title: job.title.clone(),
@@ -215,6 +365,7 @@ async fn run<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, cancel: Arc<Notify>
         album: job.album.clone(),
         duration: job.duration,
         cover: job.cover.clone(),
+        genre: job.genre.clone(),
     };
     if let Some(info) = &info {
         let m = sources::meta_from_info(info);
@@ -224,6 +375,7 @@ async fn run<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, cancel: Arc<Notify>
         }
         meta.album = meta.album.or(m.album);
         meta.duration = meta.duration.or(m.duration);
+        meta.genre = meta.genre.or(m.genre);
     }
     if job.source == Source::Local {
         let (t, a, al) = tags::read_basic(&file);
@@ -245,30 +397,54 @@ async fn run<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, cancel: Arc<Notify>
     let local = tokio::task::spawn_blocking(move || bpm::analyze_file(&f)).await?;
     let local = local.ok().map(|a| (a.bpm, a.confidence));
 
-    // 4. Vérification en ligne
+    // 4. Vérification en ligne, pochette HD et genre
+    let is_local = job.source == Source::Local;
     let mut found: Vec<SourceBpm> = Vec::new();
-    let mut deezer_cover = None;
-    if settings.verify_online {
+    let mut hd_cover: Option<String> = None;
+    let want_extras = !is_local && (settings.hd_cover || settings.sort_by != "none" || meta.genre.is_none());
+    if settings.verify_online || want_extras {
         set_status(app, id, Status::Verifying)?;
         let artist = meta.artist.clone().unwrap_or_default();
         let title = meta.title.clone().unwrap_or_default();
         if !title.is_empty() {
-            let (dz, gs) = tokio::join!(
+            let verify = settings.verify_online;
+            let (dz, gs, it) = tokio::join!(
                 online::deezer(&artist, &title, meta.duration),
-                online::getsongbpm(&settings.getsongbpm_key, &artist, &title)
+                async {
+                    if verify {
+                        online::getsongbpm(&settings.getsongbpm_key, &artist, &title).await
+                    } else {
+                        None
+                    }
+                },
+                async {
+                    if want_extras {
+                        online::itunes(&artist, &title, meta.duration).await
+                    } else {
+                        None
+                    }
+                }
             );
+            if let Some(it) = it {
+                hd_cover = it.cover;
+                meta.genre = meta.genre.or(it.genre);
+                meta.album = meta.album.or(it.album);
+            }
             if let Some(dz) = dz {
-                if let Some(b) = dz.bpm {
-                    found.push(SourceBpm { source: "Deezer".into(), bpm: b });
+                if verify {
+                    if let Some(b) = dz.bpm {
+                        found.push(SourceBpm { source: "Deezer".into(), bpm: b });
+                    }
                 }
                 meta.album = meta.album.or(dz.album);
-                deezer_cover = dz.cover;
+                meta.genre = meta.genre.or(dz.genre);
+                hd_cover = hd_cover.or(dz.cover);
             }
             if let Some(b) = gs {
                 found.push(SourceBpm { source: "GetSongBPM".into(), bpm: b });
             }
         }
-        if let Some(info) = &info {
+        if let (true, Some(info)) = (settings.verify_online, &info) {
             let text = format!(
                 "{} {}",
                 info["title"].as_str().unwrap_or(""),
@@ -283,22 +459,30 @@ async fn run<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, cancel: Arc<Notify>
 
     // 5. Tags
     set_status(app, id, Status::Tagging)?;
-    let cover_url = match job.source {
-        Source::Spotify => meta.cover.clone().or(deezer_cover),
-        Source::Youtube => deezer_cover,
-        _ => None,
+    let cover_url = if is_local {
+        None
+    } else if settings.hd_cover && hd_cover.is_some() {
+        hd_cover.clone()
+    } else if job.source == Source::Spotify {
+        meta.cover.clone().or(hd_cover.clone())
+    } else {
+        None // garde la miniature intégrée par yt-dlp
     };
-    let cover = match cover_url {
-        Some(u) => fetch_bytes(&u).await,
+    let cover = match &cover_url {
+        Some(u) => fetch_bytes(u).await,
         None => None,
     };
-    let is_local = job.source == Source::Local;
     let detail = result.as_ref().map(describe);
+    // Fichier local déjà tagué avec un autre BPM : on ne l'écrase pas.
+    let existing = if is_local { tags::read_bpm(&file) } else { None };
+    let differs = matches!((existing, &result), (Some(old), Some(r)) if old.round() != r.bpm.round());
+    let existing_bpm = if differs { existing } else { None };
     let data = TagData {
         title: if is_local { None } else { meta.title.clone() },
         artist: if is_local { None } else { meta.artist.clone() },
         album: if is_local { None } else { meta.album.clone() },
-        bpm: result.as_ref().map(|r| r.bpm),
+        genre: if is_local { None } else { meta.genre.clone() },
+        bpm: if differs { None } else { result.as_ref().map(|r| r.bpm) },
         bpm_detail: detail,
         cover,
     };
@@ -306,11 +490,13 @@ async fn run<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, cancel: Arc<Notify>
     tokio::task::spawn_blocking(move || tags::write(&f, &data)).await??;
 
     // 6. Rangement
+    let bpm_value = result.as_ref().map(|r| r.bpm);
     let final_path = if is_local {
         file
     } else {
-        let name = file_name(&meta, result.as_ref().map(|r| r.bpm).filter(|_| settings.bpm_in_filename));
-        let dest = unique(&PathBuf::from(&settings.output_dir).join(name));
+        let name = file_name(&settings.filename_template, &meta, bpm_value);
+        let dir = PathBuf::from(&settings.output_dir).join(sort_folder(&settings.sort_by, &meta, bpm_value));
+        let dest = unique(&dir.join(name));
         move_file(&file, &dest).await?;
         if let Some(tmp) = file.parent() {
             let _ = tokio::fs::remove_dir(tmp).await; // seulement s'il est vide
@@ -318,12 +504,18 @@ async fn run<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, cancel: Arc<Notify>
         dest
     };
 
+    let display_cover = if settings.hd_cover { hd_cover.or(meta.cover.clone()) } else { meta.cover.clone() };
     update(app, id, |j| {
         j.status = Status::Done;
         j.progress = 1.0;
         j.path = Some(final_path.display().to_string());
         j.album = meta.album.clone();
+        j.genre = meta.genre.clone();
         j.bpm = result;
+        j.existing_bpm = existing_bpm;
+        if !is_local {
+            j.cover = display_cover.or(j.cover.take());
+        }
     });
     Ok(())
 }
@@ -338,7 +530,8 @@ async fn download<R: tauri::Runtime>(
 ) -> Result<(PathBuf, serde_json::Value)> {
     let tmp = PathBuf::from(&settings.output_dir).join(".trackfetcher-tmp");
     tokio::fs::create_dir_all(&tmp).await?;
-    let template = tmp.join(format!("{id}-%(id)s.%(ext)s"));
+    // Nom stable : un téléchargement interrompu reprend là où il s'était arrêté.
+    let template = tmp.join("%(extractor_key)s-%(id)s.%(ext)s");
     let quality = match settings.quality.as_str() {
         "v0" => "0",
         "192" => "192K",
@@ -353,9 +546,10 @@ async fn download<R: tauri::Runtime>(
             "--ppa",
             r#"ThumbnailsConvertor+FFmpeg_o:-c:v mjpeg -vf crop="'if(gt(ih,iw),iw,ih)':'if(gt(iw,ih),ih,iw)'""#,
         ])
-        .args(["--no-playlist", "--newline", "--progress", "--no-mtime", "--encoding", "utf-8"])
+        .args(["--no-playlist", "--newline", "--progress", "--no-mtime", "--encoding", "utf-8", "--continue"])
+        .args(["--retries", "10", "--fragment-retries", "10", "--retry-sleep", "exp=1:20"])
         .args(["--progress-template", "download:TFPROG %(progress._percent_str)s"])
-        .args(["-O", "after_move:%(.{filepath,title,track,artist,creator,uploader,channel,album,description,duration})j"])
+        .args(["-O", "after_move:%(.{filepath,title,track,artist,creator,uploader,channel,album,genre,description,duration})j"])
         .arg("-o")
         .arg(&template)
         .env("PYTHONIOENCODING", "utf-8")
@@ -454,6 +648,8 @@ async fn fetch_bytes(url: &str) -> Option<Vec<u8>> {
     r.bytes().await.ok().map(|b| b.to_vec())
 }
 
+// ---------- Nommage et tri ----------
+
 pub fn sanitize(s: &str) -> String {
     let cleaned: String = s
         .chars()
@@ -464,16 +660,85 @@ pub fn sanitize(s: &str) -> String {
     cleaned.chars().take(150).collect()
 }
 
-fn file_name(meta: &Meta, bpm: Option<f64>) -> String {
-    let title = meta.title.clone().unwrap_or_else(|| "Sans titre".into());
-    let base = match &meta.artist {
-        Some(a) if !a.is_empty() => format!("{a} - {title}"),
-        _ => title,
+/// Entier, comme dans le tag TBPM.
+fn fmt_bpm(b: f64) -> String {
+    format!("{}", b.round())
+}
+
+/// Remplace les balises du modèle. Un groupe entre parenthèses ou crochets
+/// dont toutes les balises sont vides disparaît (« [{bpm} BPM] » sans BPM).
+pub fn render_template(template: &str, meta: &Meta, bpm: Option<f64>) -> String {
+    static GROUP: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s*[\(\[][^\(\)\[\]]*[\)\]]").unwrap());
+    static TOKEN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{(\w+)\}").unwrap());
+    let value = |name: &str| -> String {
+        match name {
+            "artist" => meta.artist.clone().unwrap_or_default(),
+            "title" => meta.title.clone().unwrap_or_default(),
+            "album" => meta.album.clone().unwrap_or_default(),
+            "genre" => meta.genre.clone().unwrap_or_default(),
+            "bpm" => bpm.map(fmt_bpm).unwrap_or_default(),
+            _ => String::new(), // {key} : tonalité, pas encore détectée
+        }
     };
-    let base = sanitize(&base);
+    let without_empty_groups = GROUP.replace_all(template, |c: &regex::Captures| {
+        let g = &c[0];
+        let tokens: Vec<_> = TOKEN.captures_iter(g).collect();
+        if !tokens.is_empty() && tokens.iter().all(|t| value(&t[1]).trim().is_empty()) {
+            String::new()
+        } else {
+            g.to_string()
+        }
+    });
+    let out = TOKEN.replace_all(&without_empty_groups, |c: &regex::Captures| value(&c[1]));
+    // Séparateurs orphelins quand une balise est vide (« - Titre », « Artiste -  »).
+    static INNER_LEFT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"([\(\[])\s*[-·]\s*").unwrap());
+    static INNER_RIGHT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s*[-·]\s*([\)\]])").unwrap());
+    static EMPTY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s*(\(\s*\)|\[\s*\])").unwrap());
+    let out = INNER_LEFT.replace_all(&out, "$1");
+    let out = INNER_RIGHT.replace_all(&out, "$1");
+    let out = EMPTY.replace_all(&out, "");
+    let mut s = out.to_string();
+    while s.contains(" -  - ") {
+        s = s.replace(" -  - ", " - ");
+    }
+    s.trim().trim_start_matches(['-', '_', '·']).trim_end_matches(['-', '_', '·']).trim().to_string()
+}
+
+fn file_name(template: &str, meta: &Meta, bpm: Option<f64>) -> String {
+    let mut base = sanitize(&render_template(template, meta, bpm));
+    if base.is_empty() {
+        base = sanitize(&render_template(settings::DEFAULT_TEMPLATE, meta, bpm));
+    }
+    if base.is_empty() {
+        base = "Sans titre".into();
+    }
+    format!("{base}.mp3")
+}
+
+fn bpm_range(bpm: Option<f64>) -> String {
     match bpm {
-        Some(b) => format!("{base} ({} BPM).mp3", b.round()),
-        None => format!("{base}.mp3"),
+        Some(b) => {
+            let lo = (b.round() as i64 / 5) * 5;
+            format!("{lo}-{} BPM", lo + 4)
+        }
+        None => "BPM inconnu".into(),
+    }
+}
+
+/// Sous-dossier de rangement. La tonalité s'ajoutera ici quand elle sera détectée.
+pub fn sort_folder(mode: &str, meta: &Meta, bpm: Option<f64>) -> PathBuf {
+    let genre = || {
+        meta.genre
+            .as_deref()
+            .map(sanitize)
+            .filter(|g| !g.is_empty())
+            .unwrap_or_else(|| "Genre inconnu".into())
+    };
+    match mode {
+        "bpm" => PathBuf::from(bpm_range(bpm)),
+        "genre" => PathBuf::from(genre()),
+        "genre_bpm" => PathBuf::from(genre()).join(bpm_range(bpm)),
+        _ => PathBuf::new(),
     }
 }
 
@@ -515,9 +780,25 @@ pub fn set_bpm<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, bpm: f64) -> Resu
     result.verdict = Verdict::Manual;
     tags::write(
         &path,
-        &TagData { title: None, artist: None, album: None, bpm: Some(bpm), bpm_detail: None, cover: None },
+        &TagData { title: None, artist: None, album: None, genre: None, bpm: Some(bpm), bpm_detail: None, cover: None },
     )?;
-    update(app, id, |j| j.bpm = Some(result)).ok_or_else(|| anyhow!("annulé"))
+    update(app, id, |j| {
+        j.bpm = Some(result);
+        j.existing_bpm = None;
+    })
+    .ok_or_else(|| anyhow!("annulé"))
+}
+
+/// Écrit dans le fichier le BPM de l'analyse à la place de l'ancien tag.
+pub fn apply_bpm<R: tauri::Runtime>(app: &AppHandle<R>, id: u64) -> Result<Job> {
+    let job = alive(app, id)?;
+    let path = PathBuf::from(job.path.clone().ok_or_else(|| anyhow!("Fichier introuvable"))?);
+    let bpm = job.bpm.as_ref().map(|r| r.bpm).ok_or_else(|| anyhow!("Pas de BPM analysé"))?;
+    tags::write(
+        &path,
+        &TagData { title: None, artist: None, album: None, genre: None, bpm: Some(bpm), bpm_detail: None, cover: None },
+    )?;
+    update(app, id, |j| j.existing_bpm = None).ok_or_else(|| anyhow!("annulé"))
 }
 
 pub fn reload_settings<R: tauri::Runtime>(app: &AppHandle<R>) -> Settings {
@@ -530,11 +811,33 @@ pub fn reload_settings<R: tauri::Runtime>(app: &AppHandle<R>) -> Settings {
 mod tests {
     use super::*;
 
+    fn meta() -> Meta {
+        Meta { title: Some("Strobe".into()), artist: Some("deadmau5".into()), genre: Some("Dance".into()), ..Default::default() }
+    }
+
     #[test]
     fn names() {
         assert_eq!(sanitize("AC/DC: Back in Black?"), "AC DC Back in Black");
-        let m = Meta { title: Some("Strobe".into()), artist: Some("deadmau5".into()), ..Default::default() };
-        assert_eq!(file_name(&m, Some(127.9)), "deadmau5 - Strobe (128 BPM).mp3");
+        assert_eq!(file_name("{artist} - {title} ({bpm} BPM)", &meta(), Some(127.9)), "deadmau5 - Strobe (128 BPM).mp3");
+        assert_eq!(file_name("{artist} - {title} [{bpm} - {key}]", &meta(), Some(128.0)), "deadmau5 - Strobe [128].mp3");
+        assert_eq!(file_name("{artist} - {title} [{bpm} BPM]", &meta(), None), "deadmau5 - Strobe.mp3");
+        assert_eq!(file_name("{bpm} - {artist} - {title}", &meta(), None), "deadmau5 - Strobe.mp3");
+        assert_eq!(file_name("{album}", &meta(), None), "deadmau5 - Strobe.mp3");
+    }
+
+    #[test]
+    fn folders() {
+        assert_eq!(sort_folder("bpm", &meta(), Some(127.6)), PathBuf::from("125-129 BPM"));
+        assert_eq!(sort_folder("genre_bpm", &meta(), None), PathBuf::from("Dance").join("BPM inconnu"));
+        assert_eq!(sort_folder("genre", &Meta::default(), None), PathBuf::from("Genre inconnu"));
+        assert_eq!(sort_folder("none", &meta(), Some(120.0)), PathBuf::new());
+    }
+
+    #[test]
+    fn network_errors() {
+        assert!(is_network_error("Unable to download webpage: <urlopen error [Errno 11001] getaddrinfo failed>"));
+        assert!(is_network_error("Read timed out"));
+        assert!(!is_network_error("Contenu privé."));
     }
 }
 
@@ -550,12 +853,17 @@ mod e2e {
         let app = tauri::test::mock_builder()
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
             .unwrap();
-        let s = Settings { output_dir: out.display().to_string(), bpm_in_filename: true, ..Default::default() };
+        let s = Settings {
+            output_dir: out.display().to_string(),
+            filename_template: "{artist} - {title} [{bpm} BPM]".into(),
+            sort_by: "bpm".into(),
+            ..Default::default()
+        };
         app.manage(AppState::new(s));
         let h = app.handle().clone();
         let src = sources::detect(&url);
-        let meta = Meta::default();
-        let id = enqueue(&h, src, url, meta, None).id;
+        let id = enqueue(&h, src, url, Meta::default(), None).id;
+        pump(&h);
         let job = loop {
             std::thread::sleep(std::time::Duration::from_millis(300));
             let j = alive(&h, id).unwrap();
@@ -568,7 +876,7 @@ mod e2e {
         let path = PathBuf::from(job.path.unwrap());
         let tag = id3::Tag::read_from_path(&path).unwrap();
         use id3::TagLike;
-        println!("TBPM={:?} title={:?} artist={:?}", tag.get("TBPM").and_then(|f| f.content().text()), tag.title(), tag.artist());
+        println!("{} TBPM={:?} title={:?} artist={:?}", path.display(), tag.get("TBPM").and_then(|f| f.content().text()), tag.title(), tag.artist());
         assert!(tag.get("TBPM").is_some());
     }
 }

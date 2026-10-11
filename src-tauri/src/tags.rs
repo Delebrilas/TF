@@ -8,6 +8,7 @@ pub struct TagData {
     pub title: Option<String>,
     pub artist: Option<String>,
     pub album: Option<String>,
+    pub genre: Option<String>,
     pub bpm: Option<f64>,
     pub bpm_detail: Option<String>,
     pub cover: Option<Vec<u8>>,
@@ -24,6 +25,13 @@ pub fn read_basic(path: &Path) -> (Option<String>, Option<String>, Option<String
     }
 }
 
+/// BPM déjà présent dans le fichier (TBPM).
+pub fn read_bpm(path: &Path) -> Option<f64> {
+    let tag = Tag::read_from_path(path).ok()?;
+    let text = tag.get("TBPM")?.content().text()?.trim().replace(',', ".");
+    text.parse::<f64>().ok().filter(|b| *b > 0.0)
+}
+
 pub fn write(path: &Path, d: &TagData) -> Result<()> {
     let mut tag = Tag::read_from_path(path).unwrap_or_else(|_| Tag::new());
     if let Some(t) = &d.title {
@@ -34,6 +42,9 @@ pub fn write(path: &Path, d: &TagData) -> Result<()> {
     }
     if let Some(a) = &d.album {
         tag.set_album(a);
+    }
+    if let Some(g) = &d.genre {
+        tag.set_genre(g);
     }
     if let Some(b) = d.bpm {
         // TBPM est un entier selon la norme ID3 : c'est ce que lisent

@@ -12,8 +12,24 @@ pub struct Settings {
     pub parallel: usize,
     pub verify_online: bool,
     pub getsongbpm_key: String,
+    /// Ancien réglage (v0.1), converti en modèle de nom au chargement.
+    #[serde(skip_serializing)]
     pub bpm_in_filename: bool,
+    /// Modèle de nom : {artist} {title} {album} {bpm} {genre} {key}
+    pub filename_template: String,
+    /// "none", "bpm", "genre" ou "genre_bpm"
+    pub sort_by: String,
+    /// Pochette HD (iTunes, Deezer) quand une correspondance fiable existe.
+    pub hd_cover: bool,
+    /// Intervalle de vérification des playlists suivies, en minutes.
+    pub watch_interval: u64,
+    /// File d'attente en pause (persistant).
+    pub paused: bool,
+    /// Dossiers de musique supplémentaires affichés dans la bibliothèque.
+    pub library_folders: Vec<String>,
 }
+
+pub const DEFAULT_TEMPLATE: &str = "{artist} - {title}";
 
 impl Default for Settings {
     fn default() -> Self {
@@ -24,6 +40,12 @@ impl Default for Settings {
             verify_online: true,
             getsongbpm_key: String::new(),
             bpm_in_filename: false,
+            filename_template: String::new(),
+            sort_by: "none".into(),
+            hd_cover: true,
+            watch_interval: 60,
+            paused: false,
+            library_folders: vec![],
         }
     }
 }
@@ -45,6 +67,18 @@ pub fn load<R: tauri::Runtime>(app: &AppHandle<R>) -> Settings {
         }
     }
     s.parallel = s.parallel.clamp(1, 4);
+    if s.filename_template.trim().is_empty() {
+        s.filename_template = if s.bpm_in_filename {
+            format!("{DEFAULT_TEMPLATE} ({{bpm}} BPM)")
+        } else {
+            DEFAULT_TEMPLATE.into()
+        };
+    }
+    s.bpm_in_filename = false;
+    if !["none", "bpm", "genre", "genre_bpm"].contains(&s.sort_by.as_str()) {
+        s.sort_by = "none".into();
+    }
+    s.watch_interval = s.watch_interval.clamp(15, 1440);
     s
 }
 

@@ -1,6 +1,6 @@
 # TrackFetcher
 
-Application de bureau (Windows, macOS, Linux) qui télécharge des morceaux depuis **Spotify, YouTube et SoundCloud** en **MP3**, détecte le **BPM**, le **vérifie en ligne** et l'écrit dans les tags ID3.
+Application de bureau Windows qui télécharge des morceaux depuis **Spotify, YouTube et SoundCloud** en **MP3**, détecte le **BPM**, le **vérifie en ligne** et l'écrit dans les tags ID3.
 
 ## Fonctionnement
 
@@ -14,6 +14,18 @@ Application de bureau (Windows, macOS, Linux) qui télécharge des morceaux depu
    - ↕ **Corrigé** : analyse ajustée d'un facteur ×2, ×½, ×1,5.
    - ⚠ **À vérifier** : désaccord, la valeur se corrige d'un clic.
 5. **Tags** : titre, artiste, album, pochette, `TBPM` (entier, lu par Rekordbox, Serato, iTunes, Windows) et le détail des sources dans `TXXX:BPM_DETAIL`.
+
+## Autres fonctions
+
+- **Bibliothèque** : une playlist par dossier (dossier de sortie, sous-dossiers, dossiers ajoutés), recherche, tri par titre, artiste, album, genre, BPM ou date.
+- **Lecteur intégré** avec visualiseur (radial, barres, onde), aléatoire, répétition, touches multimédia.
+- **Playlists suivies** : Spotify, SoundCloud ou YouTube vérifiées régulièrement, les nouveautés sont téléchargées.
+- **File d'attente** : priorités, pause, reprise après fermeture et nouvelles tentatives automatiques en cas de coupure réseau.
+- **Nom de fichier configurable** (`{artist} - {title} [{bpm} BPM]`) et **rangement** en dossiers par BPM et/ou genre.
+- **Pochette HD** (iTunes 1400 px, sinon Deezer) et genre.
+- **Glisser-déposer** de liens depuis le navigateur ou de MP3.
+- Si un MP3 a déjà un BPM différent de l'analyse, le tag n'est pas écrasé : un bouton « Appliquer » le propose.
+- Thème clair, sombre ou système.
 
 Le bouton **Analyser des MP3** (ou un glisser-déposer) applique les étapes 3 à 5 à des fichiers existants.
 
@@ -38,7 +50,7 @@ Test de bout en bout sur un vrai lien :
 TF_E2E_URL="https://www.youtube.com/watch?v=..." cargo test --release --features e2e e2e --manifest-path src-tauri/Cargo.toml -- --nocapture
 ```
 
-Les installateurs Windows / macOS / Linux sont produits par GitHub Actions (`.github/workflows/build.yml`) à chaque push sur `main` (installateurs dans l'onglet Actions) et chaque tag `v*` (release brouillon).
+L'installateur Windows est produit par GitHub Actions (`.github/workflows/build.yml`) à chaque push sur `main` (onglet Actions).
 
 ## Usage
 
