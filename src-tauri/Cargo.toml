@@ -1,0 +1,40 @@
+[package]
+name = "trackfetcher"
+version = "0.1.0"
+description = "Téléchargeur MP3 avec détection et vérification du BPM"
+edition = "2021"
+
+[lib]
+name = "trackfetcher_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["process", "sync", "fs", "io-util", "macros", "rt-multi-thread", "time"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+futures-util = "0.3"
+symphonia = { version = "0.5", default-features = false, features = ["mp3", "aac", "isomp4", "wav", "flac"] }
+rustfft = "6"
+id3 = "1"
+regex = "1"
+urlencoding = "2"
+anyhow = "1"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[features]
+# Test de bout en bout : TF_E2E_URL=<lien> cargo test --features e2e e2e -- --nocapture
+e2e = ["tauri/test"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
