@@ -12,6 +12,8 @@ pub struct ToolsStatus {
     pub ffmpeg: Option<String>,
     /// Vrai si l'installation automatique de ffmpeg est possible sur cet OS.
     pub ffmpeg_auto: bool,
+    /// Moteur JavaScript dont yt-dlp a besoin pour YouTube.
+    pub deno: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -19,6 +21,89 @@ pub struct Tools {
     pub ytdlp: PathBuf,
     /// Dossier contenant ffmpeg (et ffprobe), passé à --ffmpeg-location.
     pub ffmpeg_dir: Option<PathBuf>,
+    /// Options communes à chaque appel de yt-dlp (moteur JS).
+    pub extra: Vec<String>,
+    /// Cookies du navigateur choisi (session YouTube).
+    pub cookies: Vec<String>,
+}
+
+impl Tools {
+    /// Pour Spotify : métadonnées seules, sans yt-dlp.
+    pub fn none() -> Self {
+        Self { ytdlp: PathBuf::new(), ffmpeg_dir: None, extra: vec![], cookies: vec![] }
+    }
+
+    pub fn ytdlp(&self) -> tokio::process::Command {
+        let mut c = command(&self.ytdlp);
+        c.args(&self.extra).args(&self.cookies);
+        c
+    }
+
+    /// Même outil sans les cookies (navigateur absent ou base illisible).
+    pub fn without_cookies(&self) -> Self {
+        Self { cookies: vec![], ..self.clone() }
+    }
+}
+
+/// L'erreur vient-elle de la lecture des cookies du navigateur ?
+pub fn is_cookie_error(msg: &str) -> bool {
+    let m = msg.to_lowercase();
+    m.contains("cookie") && (m.contains("could not") || m.contains("failed") || m.contains("unable") || m.contains("not find") || m.contains("permission"))
+        || m.contains("dpapi")
+        || m.contains("failed to decrypt")
+}
+
+fn find_deno<R: tauri::Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
+    let local = bin_dir(app).ok()?.join(exe("deno"));
+    if local.is_file() {
+        return Some(local);
+    }
+    which("deno")
+}
+
+/// Vrai si cette version de yt-dlp connaît `--js-runtimes` (mis en cache).
+fn supports_js_runtimes(ytdlp: &Path) -> bool {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, bool>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some(v) = cache.lock().unwrap().get(ytdlp) {
+        return *v;
+    }
+    let mut cmd = std::process::Command::new(ytdlp);
+    cmd.arg("--help");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
+    let ok = cmd
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains("--js-runtimes"))
+        .unwrap_or(false);
+    cache.lock().unwrap().insert(ytdlp.to_path_buf(), ok);
+    ok
+}
+
+fn cookie_args<R: tauri::Runtime>(app: &AppHandle<R>) -> Vec<String> {
+    let Some(st) = app.try_state::<crate::jobs::AppState>() else { return vec![] };
+    let browser = st.settings.lock().unwrap().cookies_browser.clone();
+    if browser.is_empty() {
+        vec![]
+    } else {
+        vec!["--cookies-from-browser".into(), browser]
+    }
+}
+
+fn extra_args<R: tauri::Runtime>(app: &AppHandle<R>, ytdlp: &Path) -> Vec<String> {
+    let mut extra = Vec::new();
+    if let Some(deno) = find_deno(app) {
+        if supports_js_runtimes(ytdlp) {
+            extra.push("--js-runtimes".into());
+            extra.push(format!("deno:{}", deno.display()));
+        }
+    }
+    extra
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -52,11 +137,11 @@ fn which(name: &str) -> Option<PathBuf> {
 }
 
 pub fn status<R: tauri::Runtime>(app: &AppHandle<R>) -> ToolsStatus {
-    let t = locate(app);
     ToolsStatus {
-        ytdlp: t.as_ref().map(|t| t.ytdlp.display().to_string()),
+        ytdlp: ytdlp_path(app).map(|p| p.display().to_string()),
         ffmpeg: find_ffmpeg(app).map(|p| p.display().to_string()),
         ffmpeg_auto: cfg!(any(windows, target_os = "macos")),
+        deno: find_deno(app).map(|p| p.display().to_string()),
     }
 }
 
@@ -68,12 +153,17 @@ fn find_ffmpeg<R: tauri::Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
     which("ffmpeg")
 }
 
+fn ytdlp_path<R: tauri::Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
+    let local = bin_dir(app).ok()?.join(exe("yt-dlp"));
+    if local.is_file() { Some(local) } else { which("yt-dlp") }
+}
+
 pub fn locate<R: tauri::Runtime>(app: &AppHandle<R>) -> Option<Tools> {
-    let dir = bin_dir(app).ok()?;
-    let local = dir.join(exe("yt-dlp"));
-    let ytdlp = if local.is_file() { Some(local) } else { which("yt-dlp") }?;
+    let ytdlp = ytdlp_path(app)?;
     let ffmpeg_dir = find_ffmpeg(app).and_then(|p| p.parent().map(Path::to_path_buf));
-    Some(Tools { ytdlp, ffmpeg_dir })
+    let extra = extra_args(app, &ytdlp);
+    let cookies = cookie_args(app);
+    Some(Tools { ytdlp, ffmpeg_dir, extra, cookies })
 }
 
 pub fn require<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<Tools> {
@@ -94,6 +184,36 @@ fn ytdlp_url() -> &'static str {
     } else {
         "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux"
     }
+}
+
+fn deno_url() -> &'static str {
+    if cfg!(windows) {
+        "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip"
+    } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        "https://github.com/denoland/deno/releases/latest/download/deno-aarch64-apple-darwin.zip"
+    } else if cfg!(target_os = "macos") {
+        "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-apple-darwin.zip"
+    } else if cfg!(target_arch = "aarch64") {
+        "https://github.com/denoland/deno/releases/latest/download/deno-aarch64-unknown-linux-gnu.zip"
+    } else {
+        "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip"
+    }
+}
+
+/// Installe Deno (moteur JavaScript que yt-dlp utilise pour YouTube).
+pub async fn install_deno<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<()> {
+    if find_deno(app).is_some() {
+        return Ok(());
+    }
+    let dir = bin_dir(app)?;
+    tokio::fs::create_dir_all(&dir).await?;
+    let zip = dir.join("deno.zip");
+    download(app, "Deno", deno_url(), &zip).await.context("Téléchargement de Deno")?;
+    let (z, d) = (zip.clone(), dir.clone());
+    let name = exe("deno");
+    tokio::task::spawn_blocking(move || extract(&z, &[name.as_str()], &d)).await??;
+    let _ = tokio::fs::remove_file(&zip).await;
+    Ok(())
 }
 
 /// (URL, fichiers à extraire de l'archive)
@@ -178,7 +298,7 @@ pub async fn install<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<ToolsStatu
     let dir = bin_dir(app)?;
     tokio::fs::create_dir_all(&dir).await?;
 
-    if locate(app).is_none() {
+    if ytdlp_path(app).is_none() {
         let dest = dir.join(exe("yt-dlp"));
         download(app, "yt-dlp", ytdlp_url(), &dest).await.context("Téléchargement de yt-dlp")?;
         make_executable(&dest)?;
@@ -203,6 +323,7 @@ pub async fn install<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<ToolsStatu
             let _ = tokio::fs::remove_file(&zip).await;
         }
     }
+    install_deno(app).await?;
     Ok(status(app))
 }
 
@@ -214,6 +335,20 @@ pub async fn self_update<R: tauri::Runtime>(app: &AppHandle<R>) {
     if local.is_file() {
         let _ = command(&local).arg("-U").output().await;
     }
+}
+
+/// Maintenance de fond : Deno installé s'il manque (anciennes installations),
+/// yt-dlp mis à jour au lancement puis toutes les 6 heures.
+pub fn start_maintenance<R: tauri::Runtime>(app: AppHandle<R>) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            if ytdlp_path(&app).is_some() {
+                let _ = install_deno(&app).await;
+                self_update(&app).await;
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(6 * 3600)).await;
+        }
+    });
 }
 
 /// Commande sans fenêtre console sous Windows.

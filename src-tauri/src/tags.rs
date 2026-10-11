@@ -11,6 +11,7 @@ pub struct TagData {
     pub genre: Option<String>,
     pub bpm: Option<f64>,
     pub bpm_detail: Option<String>,
+    pub key: Option<crate::key::Key>,
     pub cover: Option<Vec<u8>>,
 }
 
@@ -30,6 +31,22 @@ pub fn read_bpm(path: &Path) -> Option<f64> {
     let tag = Tag::read_from_path(path).ok()?;
     let text = tag.get("TBPM")?.content().text()?.trim().replace(',', ".");
     text.parse::<f64>().ok().filter(|b| *b > 0.0)
+}
+
+pub fn has_picture(path: &Path) -> bool {
+    Tag::read_from_path(path).is_ok_and(|t| t.pictures().next().is_some())
+}
+
+pub fn set_artist(path: &Path, artist: &str) -> Result<()> {
+    let mut tag = Tag::read_from_path(path).unwrap_or_else(|_| Tag::new());
+    tag.set_artist(artist);
+    tag.write_to_path(path, Version::Id3v23)?;
+    Ok(())
+}
+
+pub fn read_key(path: &Path) -> Option<String> {
+    let tag = Tag::read_from_path(path).ok()?;
+    tag.get("TKEY")?.content().text().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
 }
 
 pub fn write(path: &Path, d: &TagData) -> Result<()> {
@@ -54,6 +71,12 @@ pub fn write(path: &Path, d: &TagData) -> Result<()> {
     if let Some(detail) = &d.bpm_detail {
         tag.remove_extended_text(Some("BPM_DETAIL"), None);
         tag.add_frame(id3::frame::ExtendedText { description: "BPM_DETAIL".into(), value: detail.clone() });
+    }
+    if let Some(k) = &d.key {
+        // TKEY en Camelot (comme Mixed In Key), notation classique en TXXX.
+        tag.set_text("TKEY", k.camelot.clone());
+        tag.remove_extended_text(Some("KEY_NAME"), None);
+        tag.add_frame(id3::frame::ExtendedText { description: "KEY_NAME".into(), value: k.name.clone() });
     }
     if let Some(data) = &d.cover {
         tag.remove_all_pictures();

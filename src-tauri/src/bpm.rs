@@ -28,9 +28,13 @@ pub struct Analysis {
     pub confidence: f64,
 }
 
-pub fn analyze_file(path: &Path) -> Result<Analysis> {
-    let (samples, sr) = decode_mono(path)?;
-    analyze_samples(&samples, sr)
+/// Tempo et tonalité en un seul décodage.
+pub fn analyze_full(path: &Path) -> (Option<Analysis>, Option<crate::key::Key>) {
+    let Ok((samples, sr)) = decode_mono(path) else { return (None, None) };
+    let tempo = analyze_samples(&samples, sr).ok();
+    let (mono, dsr) = downsample(&samples, sr as f64);
+    let key = crate::key::detect(&center_window(&mono, dsr, MAX_SECONDS), dsr);
+    (tempo, key)
 }
 
 pub fn analyze_samples(samples: &[f32], sr: u32) -> Result<Analysis> {

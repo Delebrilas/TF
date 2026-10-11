@@ -127,9 +127,18 @@ pub async fn add<R: tauri::Runtime>(app: &AppHandle<R>, url: String, download_ex
         checking: false,
     };
     let mut queued = 0;
+    // Les morceaux déjà présents dans le dossier ne sont pas retéléchargés.
+    let output_dir = app.state::<AppState>().settings.lock().unwrap().output_dir.clone();
+    let fresh: HashSet<String> = if download_existing {
+        let (fresh, _) = crate::history::split_new(app, &output_dir, resolved.tracks.clone(), &jobs::queued_identities(app));
+        fresh.into_iter().map(|t| t.key).collect()
+    } else {
+        HashSet::new()
+    };
     for t in resolved.tracks {
-        if download_existing {
-            jobs::enqueue(app, t.source, t.url, t.meta, None);
+        if download_existing && fresh.contains(&t.key) {
+            let sk = crate::history::source_key(t.source, &t.key);
+            jobs::enqueue(app, t.source, t.url.clone(), t.meta.clone(), None, sk);
             queued += 1;
         }
         w.known.push(t.key);
@@ -148,7 +157,7 @@ pub fn remove<R: tauri::Runtime>(app: &AppHandle<R>, id: u64) {
 
 async fn resolve<R: tauri::Runtime>(app: &AppHandle<R>, url: &str) -> Result<sources::Resolved> {
     let t = if sources::detect(url) == Source::Spotify {
-        tools::Tools { ytdlp: Default::default(), ffmpeg_dir: None }
+        tools::Tools::none()
     } else {
         tools::locate(app).ok_or_else(|| anyhow!("yt-dlp n'est pas installé"))?
     };
@@ -192,9 +201,12 @@ pub async fn check<R: tauri::Runtime>(app: &AppHandle<R>, id: u64) -> Result<usi
         }
     }
     save_and_emit(app);
+    let output_dir = app.state::<AppState>().settings.lock().unwrap().output_dir.clone();
+    let (new_tracks, _) = crate::history::split_new(app, &output_dir, new_tracks, &jobs::queued_identities(app));
     let n = new_tracks.len();
     for t in new_tracks {
-        jobs::enqueue(app, t.source, t.url, t.meta, None);
+        let sk = crate::history::source_key(t.source, &t.key);
+        jobs::enqueue(app, t.source, t.url, t.meta, None, sk);
     }
     if n > 0 {
         jobs::pump(app);

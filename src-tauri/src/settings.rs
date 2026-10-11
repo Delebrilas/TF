@@ -17,7 +17,7 @@ pub struct Settings {
     pub bpm_in_filename: bool,
     /// Modèle de nom : {artist} {title} {album} {bpm} {genre} {key}
     pub filename_template: String,
-    /// "none", "bpm", "genre" ou "genre_bpm"
+    /// "none", "bpm", "genre", "genre_bpm", "key" ou "key_bpm"
     pub sort_by: String,
     /// Pochette HD (iTunes, Deezer) quand une correspondance fiable existe.
     pub hd_cover: bool,
@@ -27,6 +27,16 @@ pub struct Settings {
     pub paused: bool,
     /// Dossiers de musique supplémentaires affichés dans la bibliothèque.
     pub library_folders: Vec<String>,
+    /// Ne pas retélécharger ce qui est déjà dans le dossier.
+    pub skip_existing: bool,
+    /// Proposer les liens copiés dans le presse-papiers.
+    pub watch_clipboard: bool,
+    /// Fond animé aux couleurs de la pochette.
+    pub ambient: bool,
+    /// La fenêtre pulse au rythme du morceau.
+    pub pulse: bool,
+    /// Navigateur dont yt-dlp lit les cookies (session YouTube), "" = aucun.
+    pub cookies_browser: String,
 }
 
 pub const DEFAULT_TEMPLATE: &str = "{artist} - {title}";
@@ -46,6 +56,11 @@ impl Default for Settings {
             watch_interval: 60,
             paused: false,
             library_folders: vec![],
+            skip_existing: true,
+            watch_clipboard: true,
+            ambient: true,
+            pulse: true,
+            cookies_browser: String::new(),
         }
     }
 }
@@ -75,10 +90,13 @@ pub fn load<R: tauri::Runtime>(app: &AppHandle<R>) -> Settings {
         };
     }
     s.bpm_in_filename = false;
-    if !["none", "bpm", "genre", "genre_bpm"].contains(&s.sort_by.as_str()) {
+    if !["none", "bpm", "genre", "genre_bpm", "key", "key_bpm"].contains(&s.sort_by.as_str()) {
         s.sort_by = "none".into();
     }
     s.watch_interval = s.watch_interval.clamp(15, 1440);
+    if !["", "firefox", "edge", "chrome", "brave", "opera", "vivaldi"].contains(&s.cookies_browser.as_str()) {
+        s.cookies_browser.clear();
+    }
     s
 }
 

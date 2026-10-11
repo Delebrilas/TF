@@ -51,12 +51,12 @@ pub struct BpmResult {
     pub verdict: Verdict,
 }
 
-fn first_artist(a: &str) -> String {
+pub fn first_artist(a: &str) -> String {
     static SPLIT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\s*(,|&| feat\.? | ft\.? | x | and )\s*").unwrap());
     SPLIT.split(a).next().unwrap_or(a).trim().to_string()
 }
 
-fn base_title(t: &str) -> String {
+pub fn base_title(t: &str) -> String {
     static PAREN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s*[\(\[][^\)\]]*[\)\]]").unwrap());
     let t = PAREN.replace_all(t, "");
     t.split(" - ").next().unwrap_or(&t).trim().to_string()

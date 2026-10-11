@@ -4,7 +4,7 @@
 //! page « embed » (sans clé d'API), puis on cherche la meilleure
 //! correspondance sur YouTube. YouTube et SoundCloud passent par yt-dlp.
 
-use crate::tools::{self, Tools};
+use crate::tools::Tools;
 use anyhow::{anyhow, Context, Result};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -77,7 +77,12 @@ pub fn http() -> reqwest::Client {
 pub async fn resolve(tools: &Tools, url: &str) -> Result<Resolved> {
     match detect(url) {
         Source::Spotify => resolve_spotify(url).await,
-        src => resolve_ytdlp(tools, url, src).await,
+        src => match resolve_ytdlp(tools, url, src).await {
+            Err(e) if crate::tools::is_cookie_error(&e.to_string()) && !tools.cookies.is_empty() => {
+                resolve_ytdlp(&tools.without_cookies(), url, src).await
+            }
+            r => r,
+        },
     }
 }
 
@@ -177,15 +182,24 @@ pub fn parse_spotify_embed(html: &str, kind: &str) -> Result<Resolved> {
 
 /// Cherche sur YouTube l'enregistrement correspondant à une piste Spotify.
 pub async fn find_on_youtube(tools: &Tools, meta: &Meta) -> Result<String> {
+    find_match(tools, meta, "ytsearch8").await
+}
+
+/// Même recherche sur SoundCloud (repli quand YouTube bloque).
+pub async fn find_on_soundcloud(tools: &Tools, meta: &Meta) -> Result<String> {
+    find_match(tools, meta, "scsearch8").await
+}
+
+async fn find_match(tools: &Tools, meta: &Meta, prefix: &str) -> Result<String> {
     let title = meta.title.clone().unwrap_or_default();
     let artist = meta.artist.clone().unwrap_or_default();
-    let query = format!("ytsearch8:{artist} - {title}");
-    let out = tools::command(&tools.ytdlp)
+    let query = format!("{prefix}:{artist} - {title}");
+    let out = tools.ytdlp()
         .args(["--flat-playlist", "-J", "--no-warnings", &query])
         .output()
         .await?;
     if !out.status.success() {
-        return Err(anyhow!("Recherche YouTube impossible : {}", last_error(&out.stderr)));
+        return Err(anyhow!("Recherche impossible : {}", last_error(&out.stderr)));
     }
     let v: Value = serde_json::from_slice(&out.stdout)?;
     let entries = v["entries"].as_array().cloned().unwrap_or_default();
@@ -194,10 +208,14 @@ pub async fn find_on_youtube(tools: &Tools, meta: &Meta) -> Result<String> {
         .map(|e| (score_candidate(e, &title, &artist, meta.duration), e))
         .max_by(|a, b| a.0.total_cmp(&b.0))
         .filter(|(s, _)| *s > -50.0)
-        .ok_or_else(|| anyhow!("Aucune correspondance trouvée sur YouTube"))?
+        .ok_or_else(|| anyhow!("Aucune correspondance trouvée"))?
         .1;
-    let id = best["id"].as_str().ok_or_else(|| anyhow!("Résultat YouTube invalide"))?;
-    Ok(format!("https://www.youtube.com/watch?v={id}"))
+    if prefix.starts_with("yt") {
+        let id = best["id"].as_str().ok_or_else(|| anyhow!("Résultat YouTube invalide"))?;
+        Ok(format!("https://www.youtube.com/watch?v={id}"))
+    } else {
+        best["url"].as_str().or(best["webpage_url"].as_str()).map(String::from).ok_or_else(|| anyhow!("Résultat invalide"))
+    }
 }
 
 pub fn normalize(s: &str) -> String {
@@ -243,10 +261,67 @@ fn score_candidate(e: &Value, title: &str, artist: &str, duration: Option<f64>) 
     s
 }
 
+// ---------- Recherche universelle ----------
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SearchResult {
+    pub source: Source,
+    pub url: String,
+    pub title: String,
+    pub artist: Option<String>,
+    pub duration: Option<f64>,
+    pub thumbnail: Option<String>,
+}
+
+async fn search_one(tools: &Tools, prefix: &str, source: Source, query: &str) -> Vec<SearchResult> {
+    let q = format!("{prefix}6:{query}");
+    let Ok(out) = tools.ytdlp()
+        .args(["--flat-playlist", "-J", "--no-warnings", &q])
+        .output()
+        .await
+    else {
+        return vec![];
+    };
+    let Ok(v) = serde_json::from_slice::<Value>(&out.stdout) else { return vec![] };
+    v["entries"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|e| {
+                    let url = e["url"].as_str().or(e["webpage_url"].as_str())?;
+                    let url = if source == Source::Youtube && !url.starts_with("http") {
+                        format!("https://www.youtube.com/watch?v={url}")
+                    } else {
+                        url.to_string()
+                    };
+                    let m = meta_from_info(e);
+                    Some(SearchResult {
+                        source,
+                        url,
+                        title: e["title"].as_str().unwrap_or("").to_string(),
+                        artist: e["channel"].as_str().or(e["uploader"].as_str()).map(String::from).or(m.artist),
+                        duration: e["duration"].as_f64(),
+                        thumbnail: thumbnail(e),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Cherche « artiste titre » sur YouTube et SoundCloud en parallèle.
+pub async fn search(tools: &Tools, query: &str) -> Vec<SearchResult> {
+    let (yt, sc) = tokio::join!(
+        search_one(tools, "ytsearch", Source::Youtube, query),
+        search_one(tools, "scsearch", Source::Soundcloud, query)
+    );
+    yt.into_iter().chain(sc).collect()
+}
+
 // ---------- YouTube / SoundCloud ----------
 
 async fn resolve_ytdlp(tools: &Tools, url: &str, src: Source) -> Result<Resolved> {
-    let out = tools::command(&tools.ytdlp)
+    let out = tools.ytdlp()
         .args(["--flat-playlist", "-J", "--no-playlist", "--no-warnings", url])
         .output()
         .await?;

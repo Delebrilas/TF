@@ -51,12 +51,54 @@ function toast(msg, isErr = false) {
   setTimeout(() => el.remove(), isErr ? 6000 : 3500);
 }
 
+function toastAction(msg, label, fn) {
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.style.display = "flex";
+  el.style.alignItems = "center";
+  el.style.gap = "12px";
+  const span = document.createElement("span");
+  span.textContent = msg;
+  const b = document.createElement("button");
+  b.className = "link";
+  b.style.color = "var(--accent)";
+  b.style.fontWeight = "600";
+  b.textContent = label;
+  b.onclick = () => {
+    el.remove();
+    fn();
+  };
+  el.append(span, b);
+  $("#toasts").appendChild(el);
+  setTimeout(() => el.remove(), 8000);
+}
+
 const fmt = (b) => (Number.isInteger(b) ? String(b) : b.toFixed(1));
 const fmtTime = (s) => {
   if (!isFinite(s)) return "0:00";
   s = Math.floor(s);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 };
+/// Couleurs de la roue Camelot (1 = jaune-vert … 12 = jaune), A plus sombre.
+function keyColor(k) {
+  const m = /^(\d{1,2})([AB])$/.exec(k || "");
+  if (!m) return "var(--muted)";
+  const hue = (75 + (Number(m[1]) - 1) * 30) % 360;
+  return `hsl(${hue}, 70%, ${m[2] === "A" ? 42 : 52}%)`;
+}
+function keyPill(k) {
+  const span = document.createElement("span");
+  span.className = "key-pill";
+  span.textContent = k;
+  span.style.background = keyColor(k);
+  span.title = "Tonalité (notation Camelot)";
+  return span;
+}
+const keySortValue = (k) => {
+  const m = /^(\d{1,2})([AB])$/.exec(k || "");
+  return m ? Number(m[1]) * 2 + (m[2] === "B" ? 1 : 0) : 99;
+};
+
 const srcIcon = (src) => ({ local: "#i-file", other: "#i-link" })[src] || "#i-" + src;
 
 // ---------- Onglets ----------
@@ -184,10 +226,16 @@ function sortQueue() {
 function renderBpm(box, job) {
   if (box.querySelector("input")) return; // édition en cours
   const r = job.bpm;
-  box.classList.toggle("has", !!r);
+  box.classList.toggle("has", !!r || !!job.key);
   box.dataset.verdict = r ? r.verdict : "";
   box.querySelector(".value").innerHTML = r ? `${fmt(r.bpm)}<small>BPM</small>` : "";
   box.querySelector(".verdict").textContent = r ? VERDICT[r.verdict] : "";
+  box.querySelector(".key-pill")?.remove();
+  if (job.key) {
+    const pill = keyPill(job.key.camelot);
+    pill.title = `Tonalité : ${job.key.name} (${job.key.camelot})`;
+    box.insertBefore(pill, box.querySelector(".details"));
+  }
   const d = box.querySelector(".details");
   d.replaceChildren();
   if (!r) return;
@@ -274,16 +322,22 @@ function onUrlInput() {
 }
 $("#url").addEventListener("input", onUrlInput);
 
-async function addUrl(url) {
+async function addUrl(url, force = false) {
   const box = $("#omnibox");
   box.classList.add("busy");
   try {
-    const n = await invoke("add_url", { url });
+    const r = await invoke("add_url", { url, force });
     if ($("#url").value.trim() === url) {
       $("#url").value = "";
       onUrlInput();
     }
-    if (n > 1) toast(`${n} pistes ajoutées`);
+    if (r.skipped && !r.added) {
+      const what = r.skipped === 1 ? `« ${r.skipped_titles[0] || "Ce morceau"} » est déjà dans ta bibliothèque` : `Ces ${r.skipped} morceaux sont déjà dans ta bibliothèque`;
+      toastAction(what, "Télécharger quand même", () => addUrl(url, true));
+      return;
+    }
+    if (r.skipped) toast(`${r.added} piste${r.added > 1 ? "s" : ""} ajoutée${r.added > 1 ? "s" : ""}, ${r.skipped} déjà présente${r.skipped > 1 ? "s" : ""} ignorée${r.skipped > 1 ? "s" : ""}`);
+    else if (r.added > 1) toast(`${r.added} pistes ajoutées`);
     showView("queue");
   } catch (err) {
     toast(String(err), true);
@@ -490,6 +544,7 @@ function filteredLibrary() {
       case "album": return cmp(a.album, b.album) || cmp(a.title, b.title);
       case "bpm": return bpm(a) - bpm(b) || cmp(a.title, b.title);
       case "genre": return cmp(a.genre, b.genre) || bpm(a) - bpm(b);
+      case "key": return keySortValue(a.key) - keySortValue(b.key) || bpm(a) - bpm(b);
       default: return b.added - a.added;
     }
   });
@@ -525,7 +580,12 @@ function renderLibrary() {
     row.innerHTML = `
       <div class="l-idx"><svg><use href="#i-note"/></svg><img alt=""/><span class="cover-play"><svg><use href="#i-play"/></svg></span></div>
       <div class="l-main"><div class="l-title"></div><div class="l-artist"></div></div>
-      <div class="l-album"></div><div class="l-genre"></div><div class="l-bpm"></div>`;
+      <div class="l-album"></div><div class="l-genre"></div><div class="l-key"></div><div class="l-bpm"></div>`;
+    if (t.key) row.querySelector(".l-key").appendChild(keyPill(t.key));
+    row.oncontextmenu = (e) => {
+      e.preventDefault();
+      showSuggestions(libTrack(t));
+    };
     row.querySelector(".l-title").textContent = t.title;
     row.querySelector(".l-artist").textContent = t.artist || "";
     row.querySelector(".l-album").textContent = t.album || "";
@@ -568,7 +628,84 @@ $("#lib-play").onclick = () => {
   if (list.length) playList(list.map(libTrack), 0);
 };
 
-const libTrack = (t) => ({ path: t.path, title: t.title, artist: t.artist, bpm: t.bpm, hasCover: t.has_cover });
+const libTrack = (t) => ({ path: t.path, title: t.title, artist: t.artist, bpm: t.bpm, key: t.key, hasCover: t.has_cover });
+
+// ---------- Suggestions d'enchaînement (roue Camelot + BPM) ----------
+
+function keyRelation(a, b) {
+  const ma = /^(\d{1,2})([AB])$/.exec(a || ""), mb = /^(\d{1,2})([AB])$/.exec(b || "");
+  if (!ma || !mb) return null;
+  const d = Math.abs(Number(ma[1]) - Number(mb[1]));
+  const dist = Math.min(d, 12 - d);
+  if (dist === 0 && ma[2] === mb[2]) return { rank: 0, label: "Même clé" };
+  if (dist === 1 && ma[2] === mb[2]) return { rank: 1, label: "Clé voisine" };
+  if (dist === 0) return { rank: 1, label: ma[2] === "A" ? "Relative majeure" : "Relative mineure" };
+  return null;
+}
+
+/// Écart de tempo relatif, en acceptant le double ou la moitié.
+function bpmGap(ref, b) {
+  if (!ref || !b) return null;
+  return Math.min(...[b, b * 2, b / 2].map((x) => Math.abs(x - ref) / ref));
+}
+
+function suggestionsFor(t) {
+  return library
+    .filter((o) => o.path !== t.path)
+    .map((o) => {
+      const rel = keyRelation(t.key, o.key);
+      const gap = bpmGap(t.bpm, o.bpm);
+      if (!rel || gap == null || gap > 0.06) return null;
+      return { o, rel, gap, score: rel.rank * 4 + gap * 100 };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.score - b.score)
+    .slice(0, 15);
+}
+
+async function showSuggestions(t) {
+  if (!t) return;
+  if (!libLoaded) await loadLibrary(true);
+  const full = library.find((o) => o.path === t.path);
+  if (full) t = { ...t, key: t.key || full.key, bpm: t.bpm || full.bpm };
+  $("#suggest").classList.remove("hidden");
+  $("#suggest-ref").replaceChildren(`${t.title || ""} · ${t.bpm ? Math.round(t.bpm) + " BPM" : "BPM inconnu"} · `, t.key ? keyPill(t.key) : "clé inconnue");
+  const ul = $("#suggest-list");
+  ul.replaceChildren();
+  const list = t.key && t.bpm ? suggestionsFor(t) : [];
+  if (!list.length) {
+    const li = document.createElement("li");
+    li.className = "empty-s";
+    li.textContent = !t.key || !t.bpm
+      ? "Ce morceau n'a pas encore de clé ou de BPM : analyse-le d'abord."
+      : "Aucun morceau compatible dans ta bibliothèque pour l'instant.";
+    ul.appendChild(li);
+    return;
+  }
+  for (const { o, rel, gap } of list) {
+    const li = document.createElement("li");
+    li.innerHTML = `<div class="l-idx"><svg><use href="#i-note"/></svg><img alt=""/></div>
+      <div class="s-meta"><div class="s-title"></div><div class="s-why"></div></div><div class="s-right"></div>`;
+    li.querySelector(".s-title").textContent = `${o.title}${o.artist ? " · " + o.artist : ""}`;
+    li.querySelector(".s-why").textContent = `${rel.label} · ${gap < 0.005 ? "même tempo" : "écart " + (gap * 100).toFixed(1) + " %"}`;
+    const right = li.querySelector(".s-right");
+    right.append(keyPill(o.key), document.createElement("br"), `${Math.round(o.bpm)} BPM`);
+    if (o.has_cover) coverFor(o.path).then((u) => setImg(li.querySelector("img"), u));
+    li.title = "Lire ensuite";
+    li.onclick = () => {
+      const tr = libTrack(o);
+      if (current()) {
+        player.list.splice(player.index + 1, 0, tr);
+        player.order = player.list.map((_, k) => k);
+        toast(`« ${o.title} » sera lu ensuite`);
+      } else playList([tr], 0);
+    };
+    ul.appendChild(li);
+  }
+}
+$("#p-suggest").onclick = () =>
+  $("#suggest").classList.contains("hidden") ? showSuggestions(current()) : $("#suggest").classList.add("hidden");
+$("#suggest-close").onclick = () => $("#suggest").classList.add("hidden");
 
 // ---------- Lecteur ----------
 
@@ -578,7 +715,7 @@ const player = { list: [], index: -1, shuffle: false, repeat: "off", order: [] }
 
 function playFromQueue(id) {
   const done = [...jobs.values()].filter((j) => j.status === "done" && j.path).sort((a, b) => b.id - a.id);
-  const list = done.map((j) => ({ path: j.path, title: j.title, artist: j.artist, bpm: j.bpm?.bpm, cover: j.cover, hasCover: true }));
+  const list = done.map((j) => ({ path: j.path, title: j.title, artist: j.artist, bpm: j.bpm?.bpm, key: j.key?.camelot, cover: j.cover, hasCover: true }));
   const i = done.findIndex((j) => j.id === id);
   if (player.list[player.index]?.path === list[i]?.path) return togglePlay();
   playList(list, Math.max(0, i));
@@ -634,6 +771,7 @@ async function loadTrack(autoplay) {
     });
   }
   beatInterval = t.bpm ? 60 / t.bpm : 0;
+  if (!$("#suggest").classList.contains("hidden")) showSuggestions(t);
   if (autoplay) play();
   markPlaying();
 }
@@ -1018,7 +1156,7 @@ setInterval(() => watched.length && renderWatched(watched), 60000);
 
 // ---------- Réglages ----------
 
-const SAMPLE = { artist: "Daft Punk", title: "One More Time", album: "Discovery", bpm: "123", genre: "Electro", key: "" };
+const SAMPLE = { artist: "Daft Punk", title: "One More Time", album: "Discovery", bpm: "123", genre: "Electro", key: "4B" };
 function previewName(tpl) {
   // Même logique que le moteur : un groupe () ou [] aux balises vides disparaît.
   let s = tpl.replace(/\s*[(\[][^()\[\]]*[)\]]/g, (g) => {
@@ -1040,6 +1178,8 @@ const SORT_HINT = {
   bpm: "Exemple : 120-124 BPM/Daft Punk - One More Time.mp3",
   genre: "Exemple : Electro/Daft Punk - One More Time.mp3",
   genre_bpm: "Exemple : Electro/120-124 BPM/Daft Punk - One More Time.mp3",
+  key: "Exemple : 4B/Daft Punk - One More Time.mp3",
+  key_bpm: "Exemple : 4B/120-124 BPM/Daft Punk - One More Time.mp3",
 };
 
 function fillSettings() {
@@ -1050,11 +1190,15 @@ function fillSettings() {
   $("#s-preview").append("Aperçu : ", Object.assign(document.createElement("b"), { textContent: previewName($("#s-template").value) }));
   setSwitch("#s-verify", settings.verify_online);
   setSwitch("#s-hdcover", settings.hd_cover);
+  setSwitch("#s-skip", settings.skip_existing);
+  setSwitch("#s-clip", settings.watch_clipboard);
   const seg = (id, v) => { for (const b of $(id).children) b.classList.toggle("on", b.dataset.v === String(v)); };
   seg("#s-quality", settings.quality);
   seg("#s-parallel", settings.parallel);
   seg("#s-sort", settings.sort_by);
+  seg("#s-sort2", settings.sort_by);
   seg("#s-interval", settings.watch_interval);
+  seg("#s-cookies", settings.cookies_browser);
   $("#s-sort-hint").textContent = SORT_HINT[settings.sort_by] || "";
   const iv = { 15: "toutes les 15 min", 60: "toutes les heures", 360: "toutes les 6 h", 1440: "une fois par jour" }[settings.watch_interval];
   $("#watch-interval-label").textContent = iv ? `Vérification ${iv}, app ouverte` : "";
@@ -1086,14 +1230,18 @@ $("#s-dir-pick").onclick = async () => {
 };
 const segClick = (id, key, num) => ($(id).onclick = (e) => {
   const v = e.target.closest("button")?.dataset.v;
-  if (v) saveSettings({ [key]: num ? Number(v) : v });
+  if (v !== undefined) saveSettings({ [key]: num ? Number(v) : v });
 });
 segClick("#s-quality", "quality");
 segClick("#s-parallel", "parallel", true);
 segClick("#s-sort", "sort_by");
+segClick("#s-sort2", "sort_by");
 segClick("#s-interval", "watch_interval", true);
 $("#s-verify").onclick = () => saveSettings({ verify_online: !settings.verify_online });
 $("#s-hdcover").onclick = () => saveSettings({ hd_cover: !settings.hd_cover });
+$("#s-skip").onclick = () => saveSettings({ skip_existing: !settings.skip_existing });
+$("#s-clip").onclick = () => saveSettings({ watch_clipboard: !settings.watch_clipboard });
+segClick("#s-cookies", "cookies_browser");
 $("#s-key").onchange = (e) => saveSettings({ getsongbpm_key: e.target.value.trim() });
 
 const tplInput = $("#s-template");
@@ -1112,6 +1260,25 @@ $("#s-tokens").onclick = (e) => {
   tplInput.dispatchEvent(new Event("input"));
   saveSettings({ filename_template: tplInput.value });
 };
+
+// ---------- Lien copié (presse-papiers) ----------
+
+let clipTimer = null;
+function showClipboard(url) {
+  const b = $("#clip-banner");
+  const src = detect(url);
+  b.dataset.src = src;
+  b.querySelector(".clip-src use").setAttribute("href", src ? "#i-" + src : "#i-link");
+  $("#clip-url").textContent = url;
+  b.classList.remove("hidden");
+  $("#clip-add").onclick = () => {
+    b.classList.add("hidden");
+    addUrl(url);
+  };
+  clearTimeout(clipTimer);
+  clipTimer = setTimeout(() => b.classList.add("hidden"), 15000);
+}
+$("#clip-dismiss").onclick = () => $("#clip-banner").classList.add("hidden");
 
 // ---------- Thème ----------
 
@@ -1180,6 +1347,7 @@ $("#btn-install").onclick = async () => {
     updateCount();
   });
   await listen("watched", (e) => renderWatched(e.payload));
+  await listen("clipboard-link", (e) => showClipboard(e.payload));
   await listen("tools-progress", (e) => {
     $("#setup-bar i").style.width = Math.round(e.payload.progress * 100) + "%";
     $("#setup-text").textContent = e.payload.message;

@@ -34,6 +34,7 @@
     <symbol id="i-eye" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
     <symbol id="i-moon" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/></symbol>
     <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+    <symbol id="i-mix" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><path stroke="currentColor" stroke-width="2" d="M12 3v4.5M12 16.5V21M3 12h4.5M16.5 12H21"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="m20 20-3.5-3.5"/></symbol>
   </svg>
 
@@ -113,6 +114,7 @@
                 <option value="artist">Artiste</option>
                 <option value="album">Album</option>
                 <option value="bpm">BPM</option>
+                <option value="key">Clé</option>
                 <option value="genre">Genre</option>
               </select>
               <button class="icon" id="lib-dir" title="Inverser l'ordre">↓</button>
@@ -125,6 +127,7 @@
               <button data-sort="title">Titre</button>
               <button data-sort="album">Album</button>
               <button data-sort="genre">Genre</button>
+              <button data-sort="key" class="r">Clé</button>
               <button data-sort="bpm" class="r">BPM</button>
             </div>
             <div id="lib-rows"></div>
@@ -176,6 +179,7 @@
     </div>
     <div class="p-right">
       <canvas id="p-viz" width="120" height="32"></canvas>
+      <button class="icon sm" id="p-suggest" title="Morceaux à enchaîner (clé et BPM compatibles)"><svg><use href="#i-mix"/></svg></button>
       <button class="icon sm" id="p-mute" title="Muet"><svg><use href="#i-volume"/></svg></button>
       <input type="range" id="p-vol" min="0" max="100" value="80" />
       <button class="icon sm" id="p-expand" title="Visualiseur plein écran"><svg><use href="#i-expand"/></svg></button>
@@ -233,7 +237,7 @@
           <button data-t="{album}">Album</button>
           <button data-t="{bpm}">BPM</button>
           <button data-t="{genre}">Genre</button>
-          <button data-t="{key}" title="Tonalité : prévue dans une prochaine version">Clé</button>
+          <button data-t="{key}" title="Tonalité en notation Camelot (ex. 8A)">Clé</button>
         </div>
         <small class="preview" id="s-preview"></small>
       </div>
@@ -245,6 +249,10 @@
           <button data-v="bpm">BPM</button>
           <button data-v="genre">Genre</button>
           <button data-v="genre_bpm">Genre › BPM</button>
+        </div>
+        <div class="segmented" id="s-sort2">
+          <button data-v="key">Clé</button>
+          <button data-v="key_bpm">Clé › BPM</button>
         </div>
         <small class="muted" id="s-sort-hint"></small>
       </div>
@@ -272,6 +280,28 @@
         </div>
       </div>
 
+      <div class="field">
+        <span>Session YouTube <small class="muted">(contre la vérification anti-robot)</small></span>
+        <div class="segmented" id="s-cookies">
+          <button data-v="">Aucune</button>
+          <button data-v="firefox">Firefox</button>
+          <button data-v="edge">Edge</button>
+          <button data-v="chrome">Chrome</button>
+          <button data-v="brave">Brave</button>
+        </div>
+        <small class="muted">Utilise la connexion YouTube de ce navigateur. Firefox fonctionne le mieux ; Chrome, Edge et Brave doivent être fermés pendant les téléchargements.</small>
+      </div>
+
+      <div class="toggle">
+        <button type="button" class="switch" role="switch" id="s-skip"></button>
+        <span><b>Ignorer les morceaux déjà téléchargés</b><small>Une playlist relancée ne récupère que ce qui manque.</small></span>
+      </div>
+
+      <div class="toggle">
+        <button type="button" class="switch" role="switch" id="s-clip"></button>
+        <span><b>Surveiller le presse-papiers</b><small>Un lien Spotify, YouTube ou SoundCloud copié est proposé au téléchargement.</small></span>
+      </div>
+
       <div class="toggle">
         <button type="button" class="switch" role="switch" id="s-verify" aria-checked="false"></button>
         <span><b>Vérifier le BPM en ligne</b><small>Compare l'analyse avec Deezer, GetSongBPM et la description.</small></span>
@@ -289,7 +319,23 @@
     </div>
   </aside>
 
+  <!-- Suggestions d'enchaînement -->
+  <aside class="suggest hidden" id="suggest">
+    <div class="suggest-head">
+      <div><b>À enchaîner après</b><div class="muted small" id="suggest-ref"></div></div>
+      <button class="icon sm" id="suggest-close" title="Fermer"><svg><use href="#i-x"/></svg></button>
+    </div>
+    <div class="suggest-legend muted small">Roue Camelot : même clé, clé voisine (±1) ou relative (A↔B), BPM à ±6 %.</div>
+    <ul id="suggest-list"></ul>
+  </aside>
+
   <div class="drop-overlay" id="drop-overlay"><div>Dépose ici un lien ou des MP3</div></div>
+  <div class="clip-banner hidden" id="clip-banner">
+    <svg class="clip-src"><use href="#i-link"/></svg>
+    <div class="clip-text"><b>Lien copié</b><span id="clip-url"></span></div>
+    <button class="primary small" id="clip-add">Télécharger</button>
+    <button class="icon sm" id="clip-dismiss" title="Ignorer"><svg><use href="#i-x"/></svg></button>
+  </div>
   <div class="toasts" id="toasts"></div>
   <audio id="audio" preload="metadata"></audio>
 

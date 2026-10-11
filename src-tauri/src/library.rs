@@ -12,6 +12,8 @@ pub struct LibTrack {
     pub album: Option<String>,
     pub genre: Option<String>,
     pub bpm: Option<f64>,
+    /// Clé Camelot (TKEY), si elle est dans ce format ou convertible.
+    pub key: Option<String>,
     pub has_cover: bool,
     /// Dossier « playlist » : nom de la racine puis sous-dossiers, séparés par « / ».
     pub folder: String,
@@ -79,6 +81,7 @@ fn read_track(p: &Path, folder: String) -> LibTrack {
             .and_then(|t| t.get("TBPM"))
             .and_then(|f| f.content().text())
             .and_then(|s| s.trim().replace(',', ".").parse().ok()),
+        key: t.and_then(|t| t.get("TKEY")).and_then(|f| f.content().text()).and_then(crate::key::to_camelot),
         has_cover: t.is_some_and(|t| t.pictures().next().is_some()),
         path: p.display().to_string(),
         added,

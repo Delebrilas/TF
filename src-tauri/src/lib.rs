@@ -1,5 +1,9 @@
+mod artwork;
 mod bpm;
+mod clipboard;
+mod history;
 mod jobs;
+mod key;
 mod library;
 mod online;
 mod settings;
@@ -42,27 +46,76 @@ async fn install_tools(app: AppHandle) -> CmdResult<tools::ToolsStatus> {
     tools::install(&app).await.map_err(|e| format!("{e:#}"))
 }
 
+#[derive(Serialize)]
+struct AddResult {
+    added: usize,
+    skipped: usize,
+    skipped_titles: Vec<String>,
+}
+
 #[tauri::command]
-async fn add_url(app: AppHandle, url: String) -> CmdResult<usize> {
+async fn add_url(app: AppHandle, url: String, force: Option<bool>) -> CmdResult<AddResult> {
     let url = url.trim().to_string();
     if url.is_empty() {
         return Err("Lien vide".into());
     }
     let resolved = if sources::detect(&url) == Source::Spotify {
         // Pas besoin de yt-dlp pour lire les métadonnées Spotify.
-        let dummy = tools::Tools { ytdlp: Default::default(), ffmpeg_dir: None };
+        let dummy = tools::Tools::none();
         sources::resolve(&dummy, &url).await
     } else {
         let t = tools::locate(&app).ok_or("yt-dlp n'est pas installé")?;
         sources::resolve(&t, &url).await
     }
     .map_err(err)?;
-    let n = resolved.tracks.len();
-    for r in resolved.tracks {
-        jobs::enqueue(&app, r.source, r.url, r.meta, None);
+    let (output_dir, skip) = {
+        let st = app.state::<AppState>();
+        let s = st.settings.lock().unwrap();
+        (s.output_dir.clone(), s.skip_existing && !force.unwrap_or(false))
+    };
+    let (fresh, skipped) = if skip {
+        let a = app.clone();
+        let tracks = resolved.tracks;
+        let in_queue = jobs::queued_identities(&app);
+        tauri::async_runtime::spawn_blocking(move || history::split_new(&a, &output_dir, tracks, &in_queue))
+            .await
+            .map_err(err)?
+    } else {
+        (resolved.tracks, vec![])
+    };
+    let added = fresh.len();
+    for r in fresh {
+        let sk = history::source_key(r.source, &r.key);
+        jobs::enqueue(&app, r.source, r.url, r.meta, None, sk);
     }
     jobs::pump(&app);
-    Ok(n)
+    Ok(AddResult { added, skipped: skipped.len(), skipped_titles: skipped.into_iter().take(5).collect() })
+}
+
+#[tauri::command]
+async fn search(app: AppHandle, query: String) -> CmdResult<Vec<sources::SearchResult>> {
+    let t = tools::locate(&app).ok_or("yt-dlp n'est pas installé")?;
+    Ok(sources::search(&t, query.trim()).await)
+}
+
+/// Fusion d'artistes : réécrit l'artiste des fichiers donnés.
+#[tauri::command]
+async fn rename_artist(paths: Vec<String>, artist: String) -> CmdResult<usize> {
+    let artist = artist.trim().to_string();
+    if artist.is_empty() {
+        return Err("Nom d'artiste vide".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut n = 0;
+        for p in paths {
+            if tags::set_artist(std::path::Path::new(&p), &artist).is_ok() {
+                n += 1;
+            }
+        }
+        n
+    })
+    .await
+    .map_err(err)
 }
 
 #[tauri::command]
@@ -74,7 +127,7 @@ fn add_files(app: AppHandle, paths: Vec<String>) -> usize {
             continue;
         }
         let name = path.file_stem().and_then(|s| s.to_str()).map(String::from);
-        jobs::enqueue(&app, Source::Local, String::new(), Meta { title: name, ..Default::default() }, Some(p));
+        jobs::enqueue(&app, Source::Local, String::new(), Meta { title: name, ..Default::default() }, Some(p), None);
         n += 1;
     }
     jobs::pump(&app);
@@ -106,7 +159,7 @@ fn import_file(app: AppHandle, st: State<AppState>, request: tauri::ipc::Request
     }
     std::fs::write(&dest, bytes).map_err(err)?;
     let meta = Meta { title: Some(name), ..Default::default() };
-    jobs::enqueue(&app, Source::Local, String::new(), meta, Some(dest.display().to_string()));
+    jobs::enqueue(&app, Source::Local, String::new(), meta, Some(dest.display().to_string()), None);
     jobs::pump(&app);
     Ok(())
 }
@@ -235,6 +288,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             let handle = app.handle().clone();
             let s = settings::load(&handle);
@@ -244,11 +298,13 @@ pub fn run() {
                 allow_dir(&handle, f);
             }
             app.manage(AppState::new(s));
+            app.manage(history::History(std::sync::Mutex::new(history::load(&handle))));
             app.manage(watch::WatchState(std::sync::Mutex::new(watch::load(&handle))));
             jobs::restore(&handle);
             jobs::pump(&handle);
             watch::start_timer(handle.clone());
-            tauri::async_runtime::spawn(async move { tools::self_update(&handle).await });
+            clipboard::start(handle.clone());
+            tools::start_maintenance(handle.clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -256,6 +312,8 @@ pub fn run() {
             install_tools,
             add_url,
             add_files,
+            search,
+            rename_artist,
             remove_job,
             clear_finished,
             retry_job,

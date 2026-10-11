@@ -78,6 +78,12 @@ pub struct Job {
     /// le tag n'est pas modifié tant que l'utilisateur n'a pas appliqué.
     #[serde(default)]
     pub existing_bpm: Option<f64>,
+    /// Identifiant de la piste source (historique des téléchargements).
+    #[serde(default)]
+    pub source_key: Option<String>,
+    /// Tonalité détectée (Camelot).
+    #[serde(default)]
+    pub key: Option<crate::key::Key>,
     #[serde(skip)]
     not_before: Option<Instant>,
 }
@@ -177,7 +183,14 @@ pub fn restore<R: tauri::Runtime>(app: &AppHandle<R>) {
 
 // ---------- Ordonnanceur ----------
 
-pub fn enqueue<R: tauri::Runtime>(app: &AppHandle<R>, source: Source, url: String, meta: Meta, path: Option<String>) -> Job {
+pub fn enqueue<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    source: Source,
+    url: String,
+    meta: Meta,
+    path: Option<String>,
+    source_key: Option<String>,
+) -> Job {
     let st = state(app);
     let id = st.next_id.fetch_add(1, Ordering::SeqCst);
     let job = Job {
@@ -200,11 +213,26 @@ pub fn enqueue<R: tauri::Runtime>(app: &AppHandle<R>, source: Source, url: Strin
         seq: id,
         attempts: 0,
         existing_bpm: None,
+        source_key,
+        key: None,
         not_before: None,
     };
     st.jobs.lock().unwrap().push(job.clone());
     emit(app, &job);
     job
+}
+
+/// Identifiants (source et artiste|titre) des pistes en file, hors erreurs.
+pub fn queued_identities<R: tauri::Runtime>(app: &AppHandle<R>) -> HashSet<String> {
+    let st = state(app);
+    let jobs = st.jobs.lock().unwrap();
+    jobs.iter()
+        .filter(|j| j.status != Status::Error)
+        .flat_map(|j| {
+            [j.source_key.clone(), crate::history::identity(j.artist.as_deref(), j.title.as_deref())]
+        })
+        .flatten()
+        .collect()
 }
 
 /// Lance autant de pistes que le permet le réglage « simultanés ».
@@ -340,7 +368,7 @@ async fn run<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, cancel: Arc<Notify>
     let (file, info) = if job.source == Source::Local {
         (PathBuf::from(job.path.clone().unwrap_or_default()), None)
     } else {
-        let tools = tools::require(app)?;
+        let mut tools = tools::require(app)?;
         let mut url = job.url.clone();
         if job.source == Source::Spotify && url.is_empty() {
             set_status(app, id, Status::Searching)?;
@@ -353,7 +381,32 @@ async fn run<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, cancel: Arc<Notify>
             url = sources::find_on_youtube(&tools, &meta).await?;
         }
         set_status(app, id, Status::Downloading)?;
-        let (file, info) = download(app, id, &tools, &url, &settings, cancel).await?;
+        let mut first = download(app, id, &tools, &url, &settings, cancel.clone()).await;
+        // Cookies illisibles (navigateur absent, ouvert ou chiffré) : on continue sans.
+        if matches!(&first, Err(e) if tools::is_cookie_error(&e.to_string())) && !tools.cookies.is_empty() {
+            tools = tools.without_cookies();
+            first = download(app, id, &tools, &url, &settings, cancel.clone()).await;
+        }
+        let (file, info) = match first {
+            Err(e) if is_bot_check(&e.to_string()) && sources::detect(&url) == Source::Youtube => {
+                // YouTube bloque : même morceau cherché sur SoundCloud.
+                let meta = Meta {
+                    title: job.title.clone(),
+                    artist: job.artist.clone(),
+                    duration: job.duration,
+                    ..Default::default()
+                };
+                let sc = if meta.title.is_some() { sources::find_on_soundcloud(&tools, &meta).await.ok() } else { None };
+                let Some(sc) = sc else { return Err(e) };
+                update(app, id, |j| {
+                    j.status = Status::Downloading;
+                    j.progress = 0.0;
+                    j.note = Some("YouTube bloqué, récupéré sur SoundCloud".into());
+                });
+                download(app, id, &tools, &sc, &settings, cancel).await?
+            }
+            other => other?,
+        };
         (file, Some(info))
     };
 
@@ -394,8 +447,8 @@ async fn run<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, cancel: Arc<Notify>
     // 3. Analyse locale
     set_status(app, id, Status::Analyzing)?;
     let f = file.clone();
-    let local = tokio::task::spawn_blocking(move || bpm::analyze_file(&f)).await?;
-    let local = local.ok().map(|a| (a.bpm, a.confidence));
+    let (tempo, key) = tokio::task::spawn_blocking(move || bpm::analyze_full(&f)).await?;
+    let local = tempo.map(|a| (a.bpm, a.confidence));
 
     // 4. Vérification en ligne, pochette HD et genre
     let is_local = job.source == Source::Local;
@@ -468,15 +521,25 @@ async fn run<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, cancel: Arc<Notify>
     } else {
         None // garde la miniature intégrée par yt-dlp
     };
-    let cover = match &cover_url {
+    let mut cover = match &cover_url {
         Some(u) => fetch_bytes(u).await,
         None => None,
     };
+    // Aucune pochette du tout : on en génère une.
+    if cover.is_none() && !is_local && !tags::has_picture(&file) {
+        cover = crate::artwork::generate(
+            meta.title.as_deref().unwrap_or(""),
+            meta.artist.as_deref().unwrap_or(""),
+            result.as_ref().map(|r| r.bpm),
+        );
+    }
     let detail = result.as_ref().map(describe);
     // Fichier local déjà tagué avec un autre BPM : on ne l'écrase pas.
     let existing = if is_local { tags::read_bpm(&file) } else { None };
     let differs = matches!((existing, &result), (Some(old), Some(r)) if old.round() != r.bpm.round());
     let existing_bpm = if differs { existing } else { None };
+    // Une clé déjà présente dans un fichier local est conservée.
+    let write_key = key.is_some() && !(is_local && tags::read_key(&file).is_some());
     let data = TagData {
         title: if is_local { None } else { meta.title.clone() },
         artist: if is_local { None } else { meta.artist.clone() },
@@ -484,6 +547,7 @@ async fn run<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, cancel: Arc<Notify>
         genre: if is_local { None } else { meta.genre.clone() },
         bpm: if differs { None } else { result.as_ref().map(|r| r.bpm) },
         bpm_detail: detail,
+        key: if write_key { key.clone() } else { None },
         cover,
     };
     let f = file.clone();
@@ -494,8 +558,9 @@ async fn run<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, cancel: Arc<Notify>
     let final_path = if is_local {
         file
     } else {
-        let name = file_name(&settings.filename_template, &meta, bpm_value);
-        let dir = PathBuf::from(&settings.output_dir).join(sort_folder(&settings.sort_by, &meta, bpm_value));
+        let camelot = key.as_ref().map(|k| k.camelot.as_str());
+        let name = file_name(&settings.filename_template, &meta, bpm_value, camelot);
+        let dir = PathBuf::from(&settings.output_dir).join(sort_folder(&settings.sort_by, &meta, bpm_value, camelot));
         let dest = unique(&dir.join(name));
         move_file(&file, &dest).await?;
         if let Some(tmp) = file.parent() {
@@ -504,6 +569,9 @@ async fn run<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, cancel: Arc<Notify>
         dest
     };
 
+    if let Some(k) = &job.source_key {
+        crate::history::record(app, k, &final_path.display().to_string());
+    }
     let display_cover = if settings.hd_cover { hd_cover.or(meta.cover.clone()) } else { meta.cover.clone() };
     update(app, id, |j| {
         j.status = Status::Done;
@@ -513,6 +581,7 @@ async fn run<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, cancel: Arc<Notify>
         j.genre = meta.genre.clone();
         j.bpm = result;
         j.existing_bpm = existing_bpm;
+        j.key = key;
         if !is_local {
             j.cover = display_cover.or(j.cover.take());
         }
@@ -537,7 +606,7 @@ async fn download<R: tauri::Runtime>(
         "192" => "192K",
         _ => "320K",
     };
-    let mut cmd = tools::command(&tools.ytdlp);
+    let mut cmd = tools.ytdlp();
     cmd.arg(url)
         .args(["-f", "bestaudio/best", "-x", "--audio-format", "mp3", "--audio-quality", quality])
         .args(["--embed-metadata", "--embed-thumbnail", "--convert-thumbnails", "jpg"])
@@ -617,10 +686,19 @@ async fn download<R: tauri::Runtime>(
     Ok((path, info))
 }
 
+pub const BOT_MESSAGE: &str = "YouTube demande une vérification anti-robot. Dans Réglages › Session YouTube, choisis ton navigateur (Firefox conseillé) puis réessaie.";
+
+fn is_bot_check(msg: &str) -> bool {
+    let m = msg.to_lowercase();
+    msg == BOT_MESSAGE || m.contains("sign in to confirm") || m.contains("not a bot") || m.contains("confirm you")
+}
+
 fn friendly(err: &str) -> String {
     let e = err.to_lowercase();
-    if e.contains("sign in to confirm") || e.contains("not a bot") {
-        "YouTube demande une vérification anti-robot. Réessaie plus tard.".into()
+    if is_bot_check(err) {
+        BOT_MESSAGE.into()
+    } else if e.contains("could not copy") && e.contains("cookie") || e.contains("failed to decrypt") || e.contains("dpapi") {
+        "Impossible de lire les cookies du navigateur (failed). Ferme-le complètement, ou choisis Firefox dans Réglages › Session YouTube.".into()
     } else if e.contains("private") {
         "Contenu privé.".into()
     } else if e.contains("unavailable") || e.contains("not available") {
@@ -667,7 +745,7 @@ fn fmt_bpm(b: f64) -> String {
 
 /// Remplace les balises du modèle. Un groupe entre parenthèses ou crochets
 /// dont toutes les balises sont vides disparaît (« [{bpm} BPM] » sans BPM).
-pub fn render_template(template: &str, meta: &Meta, bpm: Option<f64>) -> String {
+pub fn render_template(template: &str, meta: &Meta, bpm: Option<f64>, key: Option<&str>) -> String {
     static GROUP: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s*[\(\[][^\(\)\[\]]*[\)\]]").unwrap());
     static TOKEN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{(\w+)\}").unwrap());
     let value = |name: &str| -> String {
@@ -677,7 +755,8 @@ pub fn render_template(template: &str, meta: &Meta, bpm: Option<f64>) -> String 
             "album" => meta.album.clone().unwrap_or_default(),
             "genre" => meta.genre.clone().unwrap_or_default(),
             "bpm" => bpm.map(fmt_bpm).unwrap_or_default(),
-            _ => String::new(), // {key} : tonalité, pas encore détectée
+            "key" => key.unwrap_or_default().to_string(),
+            _ => String::new(),
         }
     };
     let without_empty_groups = GROUP.replace_all(template, |c: &regex::Captures| {
@@ -704,10 +783,10 @@ pub fn render_template(template: &str, meta: &Meta, bpm: Option<f64>) -> String 
     s.trim().trim_start_matches(['-', '_', '·']).trim_end_matches(['-', '_', '·']).trim().to_string()
 }
 
-fn file_name(template: &str, meta: &Meta, bpm: Option<f64>) -> String {
-    let mut base = sanitize(&render_template(template, meta, bpm));
+fn file_name(template: &str, meta: &Meta, bpm: Option<f64>, key: Option<&str>) -> String {
+    let mut base = sanitize(&render_template(template, meta, bpm, key));
     if base.is_empty() {
-        base = sanitize(&render_template(settings::DEFAULT_TEMPLATE, meta, bpm));
+        base = sanitize(&render_template(settings::DEFAULT_TEMPLATE, meta, bpm, key));
     }
     if base.is_empty() {
         base = "Sans titre".into();
@@ -725,8 +804,8 @@ fn bpm_range(bpm: Option<f64>) -> String {
     }
 }
 
-/// Sous-dossier de rangement. La tonalité s'ajoutera ici quand elle sera détectée.
-pub fn sort_folder(mode: &str, meta: &Meta, bpm: Option<f64>) -> PathBuf {
+/// Sous-dossier de rangement.
+pub fn sort_folder(mode: &str, meta: &Meta, bpm: Option<f64>, key: Option<&str>) -> PathBuf {
     let genre = || {
         meta.genre
             .as_deref()
@@ -738,6 +817,8 @@ pub fn sort_folder(mode: &str, meta: &Meta, bpm: Option<f64>) -> PathBuf {
         "bpm" => PathBuf::from(bpm_range(bpm)),
         "genre" => PathBuf::from(genre()),
         "genre_bpm" => PathBuf::from(genre()).join(bpm_range(bpm)),
+        "key" => PathBuf::from(key.unwrap_or("Clé inconnue")),
+        "key_bpm" => PathBuf::from(key.unwrap_or("Clé inconnue")).join(bpm_range(bpm)),
         _ => PathBuf::new(),
     }
 }
@@ -780,7 +861,7 @@ pub fn set_bpm<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, bpm: f64) -> Resu
     result.verdict = Verdict::Manual;
     tags::write(
         &path,
-        &TagData { title: None, artist: None, album: None, genre: None, bpm: Some(bpm), bpm_detail: None, cover: None },
+        &TagData { title: None, artist: None, album: None, genre: None, bpm: Some(bpm), bpm_detail: None, key: None, cover: None },
     )?;
     update(app, id, |j| {
         j.bpm = Some(result);
@@ -796,7 +877,7 @@ pub fn apply_bpm<R: tauri::Runtime>(app: &AppHandle<R>, id: u64) -> Result<Job> 
     let bpm = job.bpm.as_ref().map(|r| r.bpm).ok_or_else(|| anyhow!("Pas de BPM analysé"))?;
     tags::write(
         &path,
-        &TagData { title: None, artist: None, album: None, genre: None, bpm: Some(bpm), bpm_detail: None, cover: None },
+        &TagData { title: None, artist: None, album: None, genre: None, bpm: Some(bpm), bpm_detail: None, key: None, cover: None },
     )?;
     update(app, id, |j| j.existing_bpm = None).ok_or_else(|| anyhow!("annulé"))
 }
@@ -818,19 +899,21 @@ mod tests {
     #[test]
     fn names() {
         assert_eq!(sanitize("AC/DC: Back in Black?"), "AC DC Back in Black");
-        assert_eq!(file_name("{artist} - {title} ({bpm} BPM)", &meta(), Some(127.9)), "deadmau5 - Strobe (128 BPM).mp3");
-        assert_eq!(file_name("{artist} - {title} [{bpm} - {key}]", &meta(), Some(128.0)), "deadmau5 - Strobe [128].mp3");
-        assert_eq!(file_name("{artist} - {title} [{bpm} BPM]", &meta(), None), "deadmau5 - Strobe.mp3");
-        assert_eq!(file_name("{bpm} - {artist} - {title}", &meta(), None), "deadmau5 - Strobe.mp3");
-        assert_eq!(file_name("{album}", &meta(), None), "deadmau5 - Strobe.mp3");
+        assert_eq!(file_name("{artist} - {title} ({bpm} BPM)", &meta(), Some(127.9), None), "deadmau5 - Strobe (128 BPM).mp3");
+        assert_eq!(file_name("{artist} - {title} [{bpm} - {key}]", &meta(), Some(128.0), None), "deadmau5 - Strobe [128].mp3");
+        assert_eq!(file_name("{artist} - {title} [{bpm} - {key}]", &meta(), Some(128.0), Some("8A")), "deadmau5 - Strobe [128 - 8A].mp3");
+        assert_eq!(file_name("{artist} - {title} [{bpm} BPM]", &meta(), None, None), "deadmau5 - Strobe.mp3");
+        assert_eq!(file_name("{bpm} - {artist} - {title}", &meta(), None, None), "deadmau5 - Strobe.mp3");
+        assert_eq!(file_name("{album}", &meta(), None, None), "deadmau5 - Strobe.mp3");
     }
 
     #[test]
     fn folders() {
-        assert_eq!(sort_folder("bpm", &meta(), Some(127.6)), PathBuf::from("125-129 BPM"));
-        assert_eq!(sort_folder("genre_bpm", &meta(), None), PathBuf::from("Dance").join("BPM inconnu"));
-        assert_eq!(sort_folder("genre", &Meta::default(), None), PathBuf::from("Genre inconnu"));
-        assert_eq!(sort_folder("none", &meta(), Some(120.0)), PathBuf::new());
+        assert_eq!(sort_folder("bpm", &meta(), Some(127.6), None), PathBuf::from("125-129 BPM"));
+        assert_eq!(sort_folder("genre_bpm", &meta(), None, None), PathBuf::from("Dance").join("BPM inconnu"));
+        assert_eq!(sort_folder("genre", &Meta::default(), None, None), PathBuf::from("Genre inconnu"));
+        assert_eq!(sort_folder("none", &meta(), Some(120.0), None), PathBuf::new());
+        assert_eq!(sort_folder("key_bpm", &meta(), Some(124.0), Some("8A")), PathBuf::from("8A").join("120-124 BPM"));
     }
 
     #[test]
@@ -862,7 +945,8 @@ mod e2e {
         app.manage(AppState::new(s));
         let h = app.handle().clone();
         let src = sources::detect(&url);
-        let id = enqueue(&h, src, url, Meta::default(), None).id;
+        app.manage(crate::history::History::default());
+        let id = enqueue(&h, src, url, Meta::default(), None, None).id;
         pump(&h);
         let job = loop {
             std::thread::sleep(std::time::Duration::from_millis(300));

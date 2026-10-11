@@ -316,7 +316,7 @@ select {
 }
 .lib-table { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 .lib-row {
-  display: grid; grid-template-columns: 52px minmax(0, 2.4fr) minmax(0, 1.4fr) minmax(0, 1fr) 70px;
+  display: grid; grid-template-columns: 52px minmax(0, 2.4fr) minmax(0, 1.4fr) minmax(0, 1fr) 54px 60px;
   gap: 12px; align-items: center; padding: 6px 14px; min-height: 52px; cursor: default;
 }
 .lib-row + .lib-row, #lib-rows .lib-row { border-top: 1px solid var(--line); }
@@ -424,6 +424,7 @@ body.dragging .drop-overlay { display: grid; }
 
 @media (max-width: 860px) {
   .tabs button { padding: 0 9px; }
+  .lib-row > :nth-child(5) { display: none; }
   .player { grid-template-columns: 1fr auto; }
   .p-right { display: none; }
   .lib-row { grid-template-columns: 52px 1fr 60px; }
@@ -459,3 +460,40 @@ body.dragging .drop-overlay { display: grid; }
 /* ---------- BPM existant différent ---------- */
 .diverge { display: flex; align-items: center; gap: 10px; margin-top: 6px; font-size: 12px; color: var(--warn); }
 .diverge .apply { height: 24px; padding: 0 10px; border-radius: 12px; background: var(--grad); color: #fff; font-size: 12px; font-weight: 600; }
+
+/* ---------- Clé Camelot ---------- */
+.key-pill { display: inline-block; min-width: 34px; text-align: center; font-size: 11px; font-weight: 800; padding: 2px 6px; border-radius: 8px; color: #fff; font-variant-numeric: tabular-nums; }
+.l-key { text-align: right; }
+.bpm .key-pill { margin-top: 4px; }
+#s-sort2 { margin-top: -2px; }
+
+/* ---------- Suggestions ---------- */
+.suggest {
+  position: fixed; right: 16px; bottom: 86px; z-index: 27; width: min(400px, calc(100% - 32px)); max-height: 60vh;
+  display: flex; flex-direction: column; background: var(--bg-2); border: 1px solid var(--line); border-radius: 16px;
+  box-shadow: 0 24px 60px -16px rgba(0,0,0,.55); animation: enter .2s ease-out;
+}
+.suggest-head { display: flex; justify-content: space-between; align-items: flex-start; padding: 14px 14px 6px 16px; }
+.suggest-legend { padding: 0 16px 8px; }
+#suggest-list { list-style: none; margin: 0; padding: 0 8px 8px; overflow-y: auto; }
+#suggest-list li { display: grid; grid-template-columns: 40px 1fr auto; gap: 10px; align-items: center; padding: 6px 8px; border-radius: 10px; cursor: pointer; }
+#suggest-list li:hover { background: var(--card-hover); }
+#suggest-list .s-meta { min-width: 0; }
+#suggest-list .s-title { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#suggest-list .s-why { font-size: 11px; color: var(--muted); }
+#suggest-list .s-right { text-align: right; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+#suggest-list .empty-s { display: block; color: var(--muted); padding: 10px 8px; cursor: default; }
+
+/* ---------- Lien copié ---------- */
+.clip-banner {
+  position: fixed; top: 76px; left: 50%; transform: translateX(-50%); z-index: 30;
+  display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 16px; max-width: min(640px, calc(100% - 32px));
+  background: var(--bg-2); border: 1px solid var(--accent); border-radius: 14px;
+  box-shadow: 0 16px 40px -12px rgba(0,0,0,.5); animation: enter .2s ease-out;
+}
+.clip-text { min-width: 0; display: flex; flex-direction: column; font-size: 12px; }
+.clip-text b { font-size: 13px; }
+.clip-text span { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.clip-banner[data-src=spotify] .clip-src { color: var(--spotify); }
+.clip-banner[data-src=youtube] .clip-src { color: var(--youtube); }
+.clip-banner[data-src=soundcloud] .clip-src { color: var(--soundcloud); }
