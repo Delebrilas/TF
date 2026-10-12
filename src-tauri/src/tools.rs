@@ -45,6 +45,17 @@ impl Tools {
     }
 }
 
+/// YouTube refuse la session du navigateur (cookies périmés ou renouvelés) :
+/// « The page needs to be reloaded ». Sans cookies, la vidéo passe en général.
+pub fn is_stale_session(msg: &str) -> bool {
+    msg.to_lowercase().contains("page needs to be reloaded")
+}
+
+/// Vaut-il la peine de réessayer sans les cookies du navigateur ?
+pub fn retry_without_cookies(msg: &str) -> bool {
+    is_cookie_error(msg) || is_stale_session(msg)
+}
+
 /// L'erreur vient-elle de la lecture des cookies du navigateur ?
 pub fn is_cookie_error(msg: &str) -> bool {
     let m = msg.to_lowercase();
@@ -361,4 +372,18 @@ pub fn command(program: &Path) -> tokio::process::Command {
     }
     cmd.kill_on_drop(true);
     cmd
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stale_session_triggers_retry_without_cookies() {
+        let e = "ERROR: [youtube] dQw4w9WgXcQ: The page needs to be reloaded.";
+        assert!(is_stale_session(e));
+        assert!(retry_without_cookies(e));
+        assert!(retry_without_cookies("ERROR: Failed to decrypt with DPAPI"));
+        assert!(!retry_without_cookies("ERROR: Video unavailable"));
+    }
 }

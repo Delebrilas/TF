@@ -383,12 +383,13 @@ async fn run<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, cancel: Arc<Notify>
         set_status(app, id, Status::Downloading)?;
         let mut first = download(app, id, &tools, &url, &settings, cancel.clone()).await;
         // Cookies illisibles (navigateur absent, ouvert ou chiffré) : on continue sans.
-        if matches!(&first, Err(e) if tools::is_cookie_error(&e.to_string())) && !tools.cookies.is_empty() {
+        // Session YouTube refusée (« The page needs to be reloaded ») : idem.
+        if matches!(&first, Err(e) if tools::retry_without_cookies(&e.to_string())) && !tools.cookies.is_empty() {
             tools = tools.without_cookies();
             first = download(app, id, &tools, &url, &settings, cancel.clone()).await;
         }
         let (file, info) = match first {
-            Err(e) if is_bot_check(&e.to_string()) && sources::detect(&url) == Source::Youtube => {
+            Err(e) if (is_bot_check(&e.to_string()) || tools::is_stale_session(&e.to_string())) && sources::detect(&url) == Source::Youtube => {
                 // YouTube bloque : même morceau cherché sur SoundCloud.
                 let meta = Meta {
                     title: job.title.clone(),
@@ -698,10 +699,12 @@ fn is_bot_check(msg: &str) -> bool {
     msg == BOT_MESSAGE || m.contains("sign in to confirm") || m.contains("not a bot") || m.contains("confirm you")
 }
 
-fn friendly(err: &str) -> String {
+pub fn friendly(err: &str) -> String {
     let e = err.to_lowercase();
     if is_bot_check(err) {
         BOT_MESSAGE.into()
+    } else if tools::is_stale_session(err) {
+        "YouTube a refusé la vidéo (« The page needs to be reloaded »). Réessaie dans quelques minutes ; si ça continue, ouvre YouTube dans ton navigateur pour rafraîchir la session, ou choisis « Aucune » dans Réglages › Session YouTube.".into()
     } else if e.contains("could not copy") && e.contains("cookie") || e.contains("failed to decrypt") || e.contains("dpapi") {
         "Impossible de lire les cookies du navigateur (failed). Ferme-le complètement, ou choisis Firefox dans Réglages › Session YouTube.".into()
     } else if e.contains("private") {

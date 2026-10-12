@@ -67,7 +67,7 @@ async fn add_url(app: AppHandle, url: String, force: Option<bool>) -> CmdResult<
         let t = tools::locate(&app).ok_or("yt-dlp n'est pas installé")?;
         sources::resolve(&t, &url).await
     }
-    .map_err(err)?;
+    .map_err(|e| jobs::friendly(&e.to_string()))?;
     let (output_dir, skip) = {
         let st = app.state::<AppState>();
         let s = st.settings.lock().unwrap();

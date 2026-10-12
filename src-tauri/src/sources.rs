@@ -78,7 +78,7 @@ pub async fn resolve(tools: &Tools, url: &str) -> Result<Resolved> {
     match detect(url) {
         Source::Spotify => resolve_spotify(url).await,
         src => match resolve_ytdlp(tools, url, src).await {
-            Err(e) if crate::tools::is_cookie_error(&e.to_string()) && !tools.cookies.is_empty() => {
+            Err(e) if crate::tools::retry_without_cookies(&e.to_string()) && !tools.cookies.is_empty() => {
                 resolve_ytdlp(&tools.without_cookies(), url, src).await
             }
             r => r,
