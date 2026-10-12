@@ -804,3 +804,51 @@ button.icon.sp { color: var(--spotify); }
 .style-chips button { height: 28px; padding: 0 11px; border-radius: 14px; border: 1px solid var(--line); color: var(--muted); font-size: 12px; }
 .style-chips button.on { background: var(--grad); color: #fff; border-color: transparent; font-weight: 600; }
 .mix-plan .reroll { padding: 0 4px; font-size: 12px; }
+
+/* ---------- Énergie et GPS de set ---------- */
+.badge-s.energy { background: rgba(255,181,71,.18); color: var(--warn); }
+.dj-browser .gps { display: none; }
+.dj-browser.gps-on .gps { display: block; grid-column: 1 / -1; }
+.dj-browser.gps-on > .search, .dj-browser.gps-on > #dj-analyze, .dj-browser.gps-on > #dj-list { display: none; }
+.gps { position: relative; }
+.gps-grid { display: grid; gap: 10px; margin-bottom: 10px; }
+.gps-field { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.gps-lbl { width: 84px; flex: none; font-size: 12px; font-weight: 600; color: var(--muted); }
+.gps-pick { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gps-fuzzy { display: inline-flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--muted); }
+.gps-fuzzy input, .gps-fuzzy select, .gps-min input { width: 64px; background: var(--bg-2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 3px 6px; font: inherit; }
+.gps-pins { display: flex; flex-wrap: wrap; gap: 6px; }
+.gps-pin { display: inline-flex; align-items: center; gap: 4px; background: var(--line); border-radius: 10px; padding: 2px 4px 2px 9px; font-size: 12px; }
+.gps-pin button { background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 14px; padding: 0 4px; }
+.gps-opts { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 2px 18px; border-top: 1px solid var(--line); padding-top: 4px; }
+.gps-opts .opt { display: flex; gap: 10px; align-items: flex-start; margin: 8px 0; }
+.gps-opts .opt b { display: block; font-size: 12.5px; }
+.gps-opts .opt small { color: var(--muted); font-size: 11px; line-height: 1.3; }
+.gps-min { display: block; margin-top: 4px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.gps-curve { margin: 8px 0; }
+.gps-curve canvas { width: 100%; height: 120px; display: block; background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; cursor: crosshair; touch-action: none; }
+.gps-curve.off canvas { opacity: .55; }
+.gps-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0; }
+.gps-route { list-style: none; margin: 0; padding: 0; max-height: 420px; overflow-y: auto; }
+.gps-step { display: grid; grid-template-columns: 58px 1fr auto auto auto auto; gap: 10px; align-items: center; padding: 6px 8px; border-radius: 10px; }
+.gps-step:hover { background: var(--card-hover); }
+.gps-step.now { background: rgba(124,92,255,.14); box-shadow: inset 3px 0 0 var(--accent); }
+.gps-step.done { opacity: .5; }
+.gps-step .s-meta { min-width: 0; }
+.gps-step .s-title { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gps-step .s-right { font-size: 12px; white-space: nowrap; }
+.gps-step .icon.on { background: rgba(124,92,255,.2); }
+.gps-time { display: flex; flex-direction: column; line-height: 1.15; }
+.gps-time b { font-size: 13px; font-variant-numeric: tabular-nums; }
+.gps-time small { color: var(--muted); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.gps-missing { margin: 2px 0 2px 68px; padding: 6px 10px; border-left: 2px solid var(--warn); font-size: 12px; }
+.gps-miss-head { color: var(--warn); font-weight: 600; }
+.gps-miss-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 4px; }
+.gps-ext { margin-top: 8px; }
+.gps-picker { position: absolute; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: flex-start; justify-content: center; padding-top: 20px; z-index: 5; border-radius: var(--radius); }
+.gps-picker-box { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; width: min(560px, 100%); box-shadow: 0 10px 40px rgba(0,0,0,.4); }
+.gps-picker-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.gps-picker-box .search input { width: 100%; }
+.gps-picker-box .dj-list { max-height: 320px; margin-top: 8px; }
+.gps-picker-box .dj-list li { grid-template-columns: 1fr auto; cursor: pointer; }
+.gps-pick-deck { cursor: pointer; color: var(--accent); }

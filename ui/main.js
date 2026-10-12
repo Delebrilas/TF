@@ -775,6 +775,14 @@ $("#lib-play").onclick = () => {
 // Petits repères dans la bibliothèque : intro DJ et note.
 function decorate(el, t) {
   const g = grids.get(t.path);
+  const e = g?.energy || t.energy;
+  if (e) {
+    const b = document.createElement("span");
+    b.className = "badge-s energy";
+    b.textContent = "E" + e;
+    b.title = `Énergie ${e}/10 (volume, densité de frappes, brillance, tempo)`;
+    el.append(" ", b);
+  }
   if (g?.dj_intro) {
     const b = document.createElement("span");
     b.className = "badge-s ok";
@@ -2160,6 +2168,7 @@ $("#sp-login").onclick = async () => {
   }
 };
 $("#s-spid").onchange = (e) => saveSettings({ spotify_client_id: e.target.value.trim() });
+$("#s-scuser").onchange = (e) => saveSettings({ soundcloud_user: e.target.value.trim() });
 document.querySelector(".howto").onclick = (e) => {
   const a = e.target.closest("a[data-url]");
   if (!a) return;
@@ -2223,6 +2232,7 @@ document.addEventListener("keydown", (e) => e.key === "Escape" && $("#myplaylist
   settings = snap.settings;
   fillSettings();
   $("#s-spid").value = settings.spotify_client_id || "";
+  $("#s-scuser").value = settings.soundcloud_user || "";
   invoke("spotify_status").then((s) => ((spotify = s), renderSpotify()));
   showTools(snap.tools);
   snap.jobs.forEach(render);

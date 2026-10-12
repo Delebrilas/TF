@@ -43,6 +43,8 @@ pub struct Settings {
     pub notify: bool,
     /// Fermer la fenêtre la range dans la zone de notification.
     pub close_to_tray: bool,
+    /// Profil SoundCloud dont les likes alimentent le GPS de set (maillons manquants).
+    pub soundcloud_user: String,
 }
 
 pub const DEFAULT_TEMPLATE: &str = "{artist} - {title}";
@@ -70,6 +72,7 @@ impl Default for Settings {
             spotify_client_id: String::new(),
             notify: true,
             close_to_tray: true,
+            soundcloud_user: String::new(),
         }
     }
 }

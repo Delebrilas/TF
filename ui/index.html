@@ -217,10 +217,12 @@
             <button data-v="next">À enchaîner</button>
             <button data-v="pairs">Paires favorites</button>
             <button data-v="all" class="on">Bibliothèque</button>
+            <button data-v="gps">GPS de set</button>
           </div>
           <label class="search"><svg><use href="#i-search"/></svg><input id="dj-search" type="text" placeholder="Titre, artiste, note, BPM…" /></label>
           <button class="link" id="dj-analyze" title="Repère les intros et outros de toute la bibliothèque">Analyser les intros</button>
           <ul class="dj-list" id="dj-list"></ul>
+          <div class="gps" id="gps"></div>
         </div>
       </div>
     </section>
@@ -388,6 +390,11 @@
       </div>
 
       <div class="field">
+        <span>Profil SoundCloud <small class="muted">(tes likes servent au GPS de set pour trouver les maillons manquants)</small></span>
+        <input id="s-scuser" type="text" spellcheck="false" placeholder="Nom ou lien de ton profil, ex. soundcloud.com/ton-nom" />
+      </div>
+
+      <div class="field">
         <span>Session du navigateur <small class="muted">(YouTube et SoundCloud)</small></span>
         <div class="segmented" id="s-cookies">
           <button data-v="">Aucune</button>
@@ -536,5 +543,6 @@
 
   <script src="main.js"></script>
   <script src="dj.js"></script>
+  <script src="gps.js"></script>
 </body>
 </html>

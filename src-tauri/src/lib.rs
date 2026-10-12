@@ -3,6 +3,7 @@ mod bpm;
 mod clipboard;
 mod desk;
 mod dj;
+mod ext;
 mod history;
 mod jobs;
 mod key;
@@ -303,6 +304,17 @@ fn pair_remove(dj: State<dj::Dj>, a: String, b: String) -> Vec<dj::Pair> {
 }
 
 #[tauri::command]
+fn ext_tracks(ext: State<ext::Ext>) -> Vec<ext::ExtTrack> {
+    ext.list()
+}
+
+/// Relit likes et playlists, puis cherche BPM et tonalité (en arrière-plan).
+#[tauri::command]
+fn ext_refresh(app: AppHandle) -> bool {
+    ext::refresh(app)
+}
+
+#[tauri::command]
 async fn export_csv(path: String, rows: Vec<Vec<String>>) -> CmdResult<usize> {
     tauri::async_runtime::spawn_blocking(move || dj::write_csv(std::path::Path::new(&path), &rows))
         .await
@@ -470,6 +482,7 @@ pub fn run() {
             }
             let data_dir = handle.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir().join("TrackFetcher"));
             app.manage(dj::Dj::load(data_dir.join("dj")));
+            app.manage(ext::Ext::load(data_dir.join("dj")));
             app.manage(history::History(std::sync::Mutex::new(history::load(&handle))));
             app.manage(watch::WatchState(std::sync::Mutex::new(watch::load(&handle))));
             jobs::restore(&handle);
@@ -529,7 +542,9 @@ pub fn run() {
             pairs_get,
             pair_add,
             pair_remove,
-            export_csv
+            export_csv,
+            ext_tracks,
+            ext_refresh
         ])
         .run(tauri::generate_context!())
         .expect("erreur au lancement de TrackFetcher");

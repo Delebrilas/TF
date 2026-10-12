@@ -233,7 +233,7 @@ function automate(d) {
   for (const prm of [pr, lock]) {
     if (!prm) continue;
     prm.cancelScheduledValues(0);
-    prm.setValueAtTime(prm === pr ? rateAt(d, t) : 1 / rateAt(d, t), t);
+    prm.setValueAtTime(prm === pr ? rateAt(d, t) : lockPitch(rateAt(d, t)), t);
   }
   let prev = null;
   for (const pt of d.pts) {
@@ -245,13 +245,16 @@ function automate(d) {
     const ramp = !step && prev && prev.r !== pt.r;
     for (const prm of [pr, lock]) {
       if (!prm) continue;
-      const v = prm === pr ? pt.r : 1 / pt.r;
+      const v = prm === pr ? pt.r : lockPitch(pt.r);
       if (ramp) prm.linearRampToValueAtTime(v, pt.t);
       else prm.setValueAtTime(v, pt.t);
     }
     prev = pt;
   }
 }
+
+// Correction du keylock, bornée à sa plage (le freinage descend presque à 0).
+const lockPitch = (r) => Math.min(2, Math.max(0.5, 1 / Math.max(r, 1e-3)));
 
 // Coupe l'automation après t (en gardant le débit à cet instant).
 function truncatePts(d, t) {
@@ -270,7 +273,10 @@ function setRate(d, r, at) {
 
 function startSource(d, when, pos) {
   stopSource(d);
-  markPlayed(d.track);
+  if (!quiet) {
+    markPlayed(d.track);
+    gpsHook("onPlay", d.track);
+  }
   const src = dctx.createBufferSource();
   src.buffer = d.buf;
   src.connect(d.n.plain);
@@ -359,6 +365,7 @@ function tempoFactor(bpmA, bpmB) {
 let mix = null; // { from, to, T0, T1, armed, preview }
 
 function planBars(a, b) {
+  if (override.bars) return override.bars;
   if (djOpts.bars !== "auto") return Number(djOpts.bars);
   // Auto : la plus courte entre l'outro de A et l'intro de B, entre 4 et 32 mesures.
   const beatsA = a.grid.outro_beats || 0;
@@ -375,6 +382,10 @@ function canMix() {
 }
 
 // Style de la prochaine transition (tiré au sort parmi ceux cochés si « Varier »).
+// Réglages imposés par le GPS (bande-annonce) et lecture « muette » (rien n'est noté comme joué).
+let override = {};
+let quiet = false;
+const gpsHook = (name, ...args) => window.gpsHooks?.[name]?.(...args);
 let plannedStyle = null;
 let lastStyle = null;
 function pickStyle() {
@@ -684,6 +695,7 @@ function finishMix() {
   if (djOpts.ramp && djOpts.sync) b.pitch = 0;
   if (m.preview) return endPreview(m.preview);
   renderAll();
+  if (gpsHook("afterMix", a, b)) return;
   if (djOpts.autoNext) loadBestNext();
 }
 
@@ -803,7 +815,7 @@ function tick() {
       }
     }
   } else if (mix && t >= mix.T1) finishMix();
-  else if (!mix && djOpts.autoPoint && canMix() && !decks[other(masterDeck)].spent) {
+  else if (!mix && (djOpts.autoPoint || gpsHook("forceAuto")) && canMix() && !decks[other(masterDeck)].spent) {
     // Point de transition auto : on arme dès que A joue et que B attend.
     const a = decks[masterDeck], b = decks[other(masterDeck)];
     const key = `${a.track.path}|${a.outPt}`;
@@ -813,7 +825,7 @@ function tick() {
     if (a.playing && !b.playing && autoSkip !== key && pos < a.outPt + 32 * beatLen(a))
       mix = { from: a.id, to: b.id, target: pos < a.outPt - lead ? a.outPt : nextBar(a, pos + lead), armed: true, auto: true };
   }
-  if (mix?.auto && !djOpts.autoPoint) mix = null;
+  if (mix?.auto && !djOpts.autoPoint && !gpsHook("forceAuto")) mix = null;
 }
 setInterval(tick, 50);
 
@@ -1345,6 +1357,8 @@ function trackRow(t, why) {
   if (t.key) right.append(keyPill(t.key));
   right.append(` ${t.bpm ? Math.round(t.bpm) : "–"} BPM`);
   if (grids.get(t.path)?.dj_intro) right.prepend(badge("Intro", "ok"), " ");
+  const en = grids.get(t.path)?.energy || t.energy;
+  if (en) right.prepend(badge("E" + en, "energy"), " ");
   if (played.has(t.path)) {
     li.classList.add("played");
     right.prepend(badge("Déjà joué"), " ");
@@ -1363,6 +1377,8 @@ function trackRow(t, why) {
 function renderBrowser() {
   if (view !== "dj") return;
   for (const b of $("#dj-tabs").children) b.classList.toggle("on", b.dataset.v === browserTab);
+  $(".dj-browser").classList.toggle("gps-on", browserTab === "gps");
+  if (browserTab === "gps") return gpsHook("render");
   const ul = $("#dj-list");
   ul.replaceChildren();
   const items = browserItems();
@@ -1791,5 +1807,22 @@ audio.addEventListener("play", () => {
 
 Object.assign(window, { djShow, loadDeck, editNote, exportCsv });
 // Pour les tests.
+// Pour le GPS de set (gps.js).
+window.djApi = {
+  decks, other, played, beatLen, posAt, play, pause, seek, loadDeck, canMix, renderAll, cancelMix,
+  opts: () => djOpts,
+  getMaster: () => masterDeck,
+  setMaster: (id) => ((masterDeck = id), (dirByHand = true), (plannedStyle = null)),
+  getMix: () => mix,
+  // Arme une transition de la platine maîtresse vers l'autre, au point `target` (secondes).
+  arm: (target) => {
+    const a = decks[masterDeck];
+    mix = { from: a.id, to: other(a.id), target, armed: true };
+    renderMixer();
+  },
+  setOverride: (o) => ((override = o || {}), (plannedStyle = null)),
+  setQuiet: (q) => (quiet = q),
+  pairs: () => pairs,
+};
 window.__dj = { level: () => { const a = new Float32Array(2048); fx.meter.getFloatTimeDomainData(a); return Math.sqrt(a.reduce((s, v) => s + v * v, 0) / a.length); }, decks, posAt, rateAt, beatIndex, effBpm, seek, play, getMix: () => mix, ctx: () => dctx };
 })();

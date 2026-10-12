@@ -140,6 +140,11 @@ pub async fn itunes(artist: &str, title: &str, duration: Option<f64>) -> Option<
 
 /// GetSongBPM (clé gratuite sur getsongbpm.com/api).
 pub async fn getsongbpm(key: &str, artist: &str, title: &str) -> Option<f64> {
+    getsongbpm_info(key, artist, title).await.and_then(|(bpm, _)| bpm)
+}
+
+/// GetSongBPM : tempo et tonalité (Camelot) d'un titre.
+pub async fn getsongbpm_info(key: &str, artist: &str, title: &str) -> Option<(Option<f64>, Option<String>)> {
     if key.trim().is_empty() {
         return None;
     }
@@ -151,15 +156,16 @@ pub async fn getsongbpm(key: &str, artist: &str, title: &str) -> Option<f64> {
         urlencoding::encode(&format!("song:{t} artist:{a}"))
     );
     let v: Value = http().get(url).send().await.ok()?.json().await.ok()?;
-    v["search"]
-        .as_array()?
-        .iter()
-        .find(|s| {
-            similar(s["title"].as_str().unwrap_or(""), &t)
-                && similar(s.pointer("/artist/name").and_then(Value::as_str).unwrap_or(""), &a)
-        })
-        .and_then(|s| s["tempo"].as_str().and_then(|x| x.parse::<f64>().ok()).or(s["tempo"].as_f64()))
-        .filter(|b| *b > 30.0)
+    let s = v["search"].as_array()?.iter().find(|s| {
+        similar(s["title"].as_str().unwrap_or(""), &t) && similar(s.pointer("/artist/name").and_then(Value::as_str).unwrap_or(""), &a)
+    })?;
+    Some(song_info(s))
+}
+
+fn song_info(s: &Value) -> (Option<f64>, Option<String>) {
+    let bpm = s["tempo"].as_str().and_then(|x| x.parse::<f64>().ok()).or(s["tempo"].as_f64()).filter(|b| *b > 30.0);
+    let key = s["key_of"].as_str().and_then(crate::key::to_camelot);
+    (bpm, key)
 }
 
 /// BPM écrit par l'auteur dans le titre ou la description (« 128 BPM »).
@@ -225,6 +231,13 @@ fn round(b: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_getsongbpm_song() {
+        let s = serde_json::json!({"title":"Strobe","tempo":"128","key_of":"F♯m","artist":{"name":"deadmau5"}});
+        assert_eq!(song_info(&s), (Some(128.0), Some("11A".into())));
+        assert_eq!(song_info(&serde_json::json!({"tempo":"0"})), (None, None));
+    }
 
     fn s(n: &str, b: f64) -> SourceBpm {
         SourceBpm { source: n.into(), bpm: b }
