@@ -203,6 +203,8 @@ pub async fn find_matches(tools: &Tools, meta: &Meta, prefix: &str) -> Result<Ve
         .iter()
         .map(|e| (score_candidate(e, &title, &artist, meta.duration), e))
         .filter(|(s, _)| *s > -50.0)
+        // Extraits de 30 s (titres SoundCloud Go+) : inutilisables.
+        .filter(|(_, e)| !(e["duration"].as_f64().is_some_and(|d| (d - 30.0).abs() < 0.5) && meta.duration.is_some_and(|d| d > 45.0)))
         .collect();
     scored.sort_by(|a, b| b.0.total_cmp(&a.0));
     Ok(scored
