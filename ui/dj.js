@@ -5,11 +5,31 @@
 
 // ---------- Options (chacune activable à la main) ----------
 
-const DJ_DEFAULTS = { noRepeat: true, autoPoint: true, sync: true, ramp: true, bassSwap: true, keylock: false, autoNext: false, fade: "power", bars: "auto" };
+// Styles de transition. `blend` : les deux morceaux se mélangent pendant N mesures.
+// Sinon B tombe sur la mesure et l'effet sur A se joue juste avant (`lead` temps).
+const STYLES = {
+  fondu: { label: "Fondu", blend: true, lead: 0, hint: "Fondu enchaîné doux" },
+  eq: { label: "Mix EQ", blend: true, lead: 0, hint: "Mélange long, échange des basses au milieu" },
+  filtre: { label: "Filtre", blend: true, lead: 0, hint: "A s'efface dans un filtre, B s'ouvre" },
+  coupure: { label: "Coupure", lead: 0, hint: "Coupe net sur la mesure" },
+  echo: { label: "Écho", lead: 2, hint: "A part en écho, B tombe" },
+  reverb: { label: "Réverb", lead: 2, hint: "A se noie dans la réverb" },
+  frein: { label: "Freinage", lead: 1, hint: "A ralentit comme un vinyle qu'on arrête" },
+  backspin: { label: "Backspin", lead: 1, hint: "A tourne à l'envers" },
+  roll: { label: "Loop roll", lead: 4, hint: "A répète un temps de plus en plus court" },
+  montee: { label: "Montée", lead: 8, hint: "Souffle qui monte sur 2 mesures, puis drop" },
+  stutter: { label: "Stutter", lead: 4, hint: "A hachée en croches, puis drop" },
+};
+const DJ_DEFAULTS = {
+  noRepeat: true, autoPoint: true, sync: true, ramp: true, bassSwap: true, keylock: false, autoNext: false,
+  bars: "auto", styles: Object.keys(STYLES), vary: true,
+};
 let djOpts = { ...DJ_DEFAULTS };
 try {
   djOpts = { ...DJ_DEFAULTS, ...JSON.parse(localStorage.getItem("tf-dj") || "{}") };
 } catch {}
+djOpts.styles = (djOpts.styles || []).filter((k) => STYLES[k]);
+if (!djOpts.styles.length) djOpts.styles = ["fondu"];
 function saveOpts() {
   try {
     localStorage.setItem("tf-dj", JSON.stringify(djOpts));
@@ -34,6 +54,10 @@ function ensureDj() {
   master = dctx.createGain();
   master.gain.value = 0.9;
   master.connect(comp).connect(dctx.destination);
+  fx.meter = dctx.createAnalyser();
+  fx.meter.fftSize = 2048;
+  master.connect(fx.meter);
+  buildFx();
   workletReady = dctx.audioWorklet
     .addModule("dj-worklet.js")
     .then(() => true)
@@ -68,6 +92,36 @@ const decks = { A: newDeck("A"), B: newDeck("B") };
 let masterDeck = "A";
 const other = (id) => (id === "A" ? "B" : "A");
 
+// Effets partagés : écho calé sur le tempo et réverb.
+const fx = {};
+function buildFx() {
+  fx.echoIn = dctx.createGain();
+  fx.delay = dctx.createDelay(4);
+  fx.fbFilter = dctx.createBiquadFilter();
+  fx.fbFilter.type = "lowpass";
+  fx.fbFilter.frequency.value = 3200;
+  fx.fb = dctx.createGain();
+  fx.fb.gain.value = 0.55;
+  fx.echoIn.connect(fx.delay).connect(fx.fbFilter).connect(fx.fb).connect(fx.delay);
+  fx.fbFilter.connect(master);
+  fx.verbIn = dctx.createGain();
+  fx.verb = dctx.createConvolver();
+  const len = Math.round(dctx.sampleRate * 3.2);
+  const ir = dctx.createBuffer(2, len, dctx.sampleRate);
+  for (let c = 0; c < 2; c++) {
+    const ch = ir.getChannelData(c);
+    for (let i = 0; i < len; i++) ch[i] = (Math.random() * 2 - 1) * Math.exp((-i / dctx.sampleRate) * 2.2);
+  }
+  fx.verb.buffer = ir;
+  fx.verbOut = dctx.createGain();
+  fx.verbOut.gain.value = 3;
+  fx.verbIn.connect(fx.verb).connect(fx.verbOut).connect(master);
+  const nl = dctx.sampleRate * 2;
+  fx.noise = dctx.createBuffer(1, nl, dctx.sampleRate);
+  const nd = fx.noise.getChannelData(0);
+  for (let i = 0; i < nl; i++) nd[i] = Math.random() * 2 - 1;
+}
+
 function buildChain(d) {
   const n = {};
   n.lock = null;
@@ -88,11 +142,23 @@ function buildChain(d) {
   n.swap = dctx.createBiquadFilter(); // basses coupées pendant la transition
   n.swap.type = "lowshelf";
   n.swap.frequency.value = 180;
+  n.lp = dctx.createBiquadFilter(); // filtres des transitions
+  n.lp.type = "lowpass";
+  n.lp.frequency.value = 22000;
+  n.hp = dctx.createBiquadFilter();
+  n.hp.type = "highpass";
+  n.hp.frequency.value = 10;
   n.fader = dctx.createGain();
   n.x = dctx.createGain();
+  n.echoSend = dctx.createGain();
+  n.echoSend.gain.value = 0;
+  n.verbSend = dctx.createGain();
+  n.verbSend.gain.value = 0;
   n.plain.connect(n.plainGain).connect(n.low);
   n.lockGain.connect(n.low);
-  n.low.connect(n.mid).connect(n.high).connect(n.swap).connect(n.fader).connect(n.x).connect(master);
+  n.low.connect(n.mid).connect(n.high).connect(n.swap).connect(n.lp).connect(n.hp).connect(n.fader).connect(n.x).connect(master);
+  n.fader.connect(n.echoSend).connect(fx.echoIn);
+  n.fader.connect(n.verbSend).connect(fx.verbIn);
   d.n = n;
   workletReady.then((ok) => {
     if (!ok) return;
@@ -308,12 +374,80 @@ function canMix() {
   return a.buf && b.buf && a.grid && b.grid;
 }
 
-// Programme la transition qui commence à T0 (A sur un début de mesure).
+// Style de la prochaine transition (tiré au sort parmi ceux cochés si « Varier »).
+let plannedStyle = null;
+let lastStyle = null;
+function pickStyle() {
+  const on = djOpts.styles.filter((k) => STYLES[k]);
+  if (!on.length) return "fondu";
+  if (!djOpts.vary) return on[0];
+  const pool = on.length > 1 ? on.filter((k) => k !== lastStyle) : on;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+function nextStyle() {
+  if (!plannedStyle || !djOpts.styles.includes(plannedStyle)) plannedStyle = pickStyle();
+  return plannedStyle;
+}
+// Temps d'avance (secondes) dont l'effet a besoin avant la mesure de B.
+function leadSeconds(style, a) {
+  return ((STYLES[style].lead || 0) * 60) / (effBpm(a) || 120);
+}
+
+function resetFx(d, t) {
+  const n = d.n;
+  for (const [prm, v] of [[n.swap.gain, 0], [n.lp.frequency, 22000], [n.hp.frequency, 10], [n.echoSend.gain, 0], [n.verbSend.gain, 0]]) {
+    prm.cancelScheduledValues(t);
+    prm.setValueAtTime(v, t);
+  }
+}
+
+let fxSources = []; // sources ajoutées par un effet (loop roll, backspin, souffle)
+function stopFxSources() {
+  for (const s of fxSources) {
+    try {
+      s.stop();
+    } catch {}
+  }
+  fxSources = [];
+}
+
+// Coupe la lecture normale de A à t, sans la marquer arrêtée (la position continue).
+function stopAt(d, t) {
+  if (!d.src) return;
+  d.src.onended = null;
+  d.src.stop(t);
+}
+
+// Lit un extrait de A dans sa chaîne (pour les effets qui remplacent sa lecture).
+function fxSource(d, buf) {
+  const src = dctx.createBufferSource();
+  src.buffer = buf;
+  src.connect(d.n.plain);
+  if (d.n.lock) src.connect(d.n.lock);
+  fxSources.push(src);
+  return src;
+}
+
+const powerCurves = (n = 64) => {
+  const ca = new Float32Array(n), cb = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const x = i / (n - 1);
+    ca[i] = Math.cos((x * Math.PI) / 2);
+    cb[i] = Math.sin((x * Math.PI) / 2);
+  }
+  return [ca, cb];
+};
+
+// Programme la transition : B entre à T0, sur un début de mesure de A.
 function schedule(T0, opts = {}) {
   const a = decks[masterDeck], b = decks[other(masterDeck)];
+  const style = opts.style || nextStyle();
+  const st = STYLES[style];
   const bars = planBars(a, b);
   const beats = bars * 4;
   const bpmA = effBpm(a, T0);
+  const beatA = 60 / bpmA; // durée réelle d'un temps de A
+  const rA = rateAt(a, T0);
   const k = tempoFactor(bpmA, b.grid.bpm);
   const bpmBt = b.grid.bpm * k; // tempo de B exprimé dans la grille de A
   const sync = djOpts.sync;
@@ -321,70 +455,200 @@ function schedule(T0, opts = {}) {
   const endBpm = ramp ? bpmBt : bpmA;
   // Durée réelle : tempo linéaire de bpmA à endBpm sur `beats` temps.
   const D = (120 * beats) / (bpmA + endBpm);
-  const T1 = T0 + D;
+  const now = dctx.currentTime;
+  const L0 = T0 - st.lead * beatA; // début de l'effet sur A
+  const T1 = st.blend || ramp ? T0 + D : T0 + 0.05;
+
+  stopFxSources();
+  resetFx(a, now);
+  resetFx(b, now);
 
   // Départ de B : son point d'entrée, sur la mesure.
-  const startB = b.inPt;
   const rB0 = sync ? bpmA / bpmBt : baseRate(b);
-  startSource(b, T0, startB);
+  startSource(b, T0, b.inPt);
   b.pts = [{ t: T0, r: rB0 }];
-  if (ramp) {
-    b.pts.push({ t: T1, r: 1 });
+  if (ramp) b.pts.push({ t: T0 + D, r: 1 });
+  automate(b);
+  if (ramp && st.blend) {
     truncatePts(a, T0);
     a.pts.push({ t: T1, r: endBpm / a.grid.bpm });
     automate(a);
   }
-  automate(b);
   if (!ramp && sync) b.pitch = Math.round((rB0 - 1) * 1000) / 10;
 
-  // Fondu enchaîné.
   const xa = a.n.x.gain, xb = b.n.x.gain;
-  const now = dctx.currentTime;
   for (const g of [xa, xb]) g.cancelScheduledValues(now);
   xa.setValueAtTime(xGain(a.id), now);
   xb.setValueAtTime(0, now);
-  // Milieu de la transition, sur un début de mesure (le tempo varie : on résout
-  // temps(t) = beats/2 avec une rampe linéaire).
+  // Instant du n-ième temps après T0 (le tempo varie linéairement pendant D).
   const beatTime = (n) => {
     const qa = (endBpm - bpmA) / (2 * D * 60), qb = bpmA / 60;
     return T0 + (Math.abs(qa) < 1e-9 ? n / qb : (-qb + Math.sqrt(qb * qb + 4 * qa * n)) / (2 * qa));
   };
   const mid = beatTime(Math.round(bars / 2) * 4);
-  if (djOpts.fade === "cut") {
-    xa.setValueAtTime(1, T0);
-    xb.setValueAtTime(0, T0);
-    xa.setValueAtTime(0, mid);
-    xb.setValueAtTime(1, mid);
-  } else if (djOpts.fade === "linear") {
-    xa.setValueAtTime(1, T0);
-    xb.setValueAtTime(0, T0);
-    xa.linearRampToValueAtTime(0, T1);
-    xb.linearRampToValueAtTime(1, T1);
-  } else {
-    const n = 64;
-    const ca = new Float32Array(n), cb = new Float32Array(n);
-    for (let i = 0; i < n; i++) {
-      const x = i / (n - 1);
-      ca[i] = Math.cos((x * Math.PI) / 2);
-      cb[i] = Math.sin((x * Math.PI) / 2);
+  const bassSwapAt = (t) => {
+    const sa = a.n.swap.gain, sb = b.n.swap.gain;
+    sb.setValueAtTime(-40, now);
+    sa.setValueAtTime(0, t - 0.03);
+    sa.linearRampToValueAtTime(-40, t + 0.03);
+    sb.setValueAtTime(-40, t - 0.03);
+    sb.linearRampToValueAtTime(0, t + 0.03);
+  };
+  // A s'arrête net à T0, B tombe à T0.
+  const drop = () => {
+    xa.setValueAtTime(1, Math.max(now, T0 - 0.004));
+    xa.linearRampToValueAtTime(0, T0 + 0.004);
+    xb.setValueAtTime(1, T0);
+  };
+
+  switch (style) {
+    case "fondu": {
+      const [ca, cb] = powerCurves();
+      xa.setValueCurveAtTime(ca, T0, D);
+      xb.setValueCurveAtTime(cb, T0, D);
+      if (djOpts.bassSwap) bassSwapAt(mid);
+      break;
     }
-    xa.setValueCurveAtTime(ca, T0, D);
-    xb.setValueCurveAtTime(cb, T0, D);
+    case "eq": {
+      // B entre vite sans basses, les basses s'échangent au milieu, A sort à la fin.
+      xb.setValueAtTime(0, T0);
+      xb.linearRampToValueAtTime(1, beatTime(beats / 4));
+      xa.setValueAtTime(1, beatTime((beats * 3) / 4));
+      xa.linearRampToValueAtTime(0, T1);
+      bassSwapAt(mid);
+      break;
+    }
+    case "filtre": {
+      const [ca, cb] = powerCurves();
+      a.n.hp.frequency.setValueAtTime(10, T0);
+      a.n.hp.frequency.exponentialRampToValueAtTime(1800, T1);
+      b.n.lp.frequency.setValueAtTime(250, T0);
+      b.n.lp.frequency.exponentialRampToValueAtTime(22000, T1);
+      xa.setValueCurveAtTime(ca, T0, D);
+      xb.setValueCurveAtTime(cb, T0, D);
+      if (djOpts.bassSwap) bassSwapAt(mid);
+      break;
+    }
+    case "coupure":
+      drop();
+      break;
+    case "echo": {
+      // Le dernier temps de A part dans un écho en croche pointée qui s'éteint.
+      fx.delay.delayTime.setValueAtTime(0.75 * beatA, now);
+      const sg = a.n.echoSend.gain;
+      sg.setValueAtTime(0, now);
+      sg.setValueAtTime(0, T0 - beatA);
+      sg.linearRampToValueAtTime(1, T0 - beatA + 0.02);
+      sg.setValueAtTime(1, T0);
+      sg.linearRampToValueAtTime(0, T0 + 0.02);
+      a.n.hp.frequency.setValueAtTime(10, L0);
+      a.n.hp.frequency.exponentialRampToValueAtTime(300, T0);
+      drop();
+      break;
+    }
+    case "reverb": {
+      const sg = a.n.verbSend.gain;
+      sg.setValueAtTime(0, L0);
+      sg.linearRampToValueAtTime(1, T0);
+      sg.linearRampToValueAtTime(0, T0 + 0.03);
+      a.n.hp.frequency.setValueAtTime(10, L0);
+      a.n.hp.frequency.exponentialRampToValueAtTime(500, T0);
+      drop();
+      break;
+    }
+    case "frein": {
+      // Le débit de A tombe à presque rien sur un temps (comme une platine qu'on arrête).
+      truncatePts(a, L0);
+      a.pts.push({ t: T0, r: 0.03 });
+      automate(a);
+      xa.setValueAtTime(1, L0);
+      xa.linearRampToValueAtTime(0.6, T0 - 0.01);
+      drop();
+      break;
+    }
+    case "backspin": {
+      // 2,5 s de A jouées à l'envers, vite puis de moins en moins.
+      const P = posAt(a, L0);
+      const sr = a.buf.sampleRate;
+      const len = Math.min(Math.round(2.5 * sr), Math.round(P * sr));
+      if (len > sr * 0.2) {
+        const rev = dctx.createBuffer(a.buf.numberOfChannels, len, sr);
+        const end = Math.round(P * sr);
+        for (let c = 0; c < a.buf.numberOfChannels; c++) {
+          const from = a.buf.getChannelData(c), to = rev.getChannelData(c);
+          for (let i = 0; i < len; i++) to[i] = from[end - 1 - i];
+        }
+        stopAt(a, L0);
+        const sp = fxSource(a, rev);
+        sp.playbackRate.setValueAtTime(3, L0);
+        sp.playbackRate.exponentialRampToValueAtTime(0.4, T0);
+        sp.start(L0);
+        sp.stop(T0 + 0.01);
+      }
+      drop();
+      break;
+    }
+    case "roll": {
+      // Le temps juste avant la mesure est répété : 1, 1/2, 1/4 puis 1/8 de temps.
+      const P = posAt(a, L0);
+      const bl = beatLen(a);
+      stopAt(a, L0);
+      [1, 0.5, 0.25, 0.125].forEach((f, i) => {
+        const s = fxSource(a, a.buf);
+        s.loop = true;
+        s.loopStart = P;
+        s.loopEnd = P + bl * f;
+        s.playbackRate.value = rA;
+        const t = L0 + i * beatA;
+        s.start(t, P);
+        s.stop(t + beatA);
+      });
+      a.n.hp.frequency.setValueAtTime(10, L0);
+      a.n.hp.frequency.exponentialRampToValueAtTime(900, T0);
+      drop();
+      break;
+    }
+    case "montee": {
+      // Souffle qui monte sur 2 mesures pendant que A perd ses basses.
+      const ns = dctx.createBufferSource();
+      ns.buffer = fx.noise;
+      ns.loop = true;
+      const bp = dctx.createBiquadFilter();
+      bp.type = "bandpass";
+      bp.Q.value = 1.5;
+      const g = dctx.createGain();
+      ns.connect(bp).connect(g).connect(master);
+      bp.frequency.setValueAtTime(300, L0);
+      bp.frequency.exponentialRampToValueAtTime(9000, T0);
+      g.gain.setValueAtTime(0, now);
+      g.gain.setValueAtTime(0.0001, L0);
+      g.gain.exponentialRampToValueAtTime(0.35, T0);
+      g.gain.setTargetAtTime(0, T0, 0.08);
+      ns.start(L0);
+      ns.stop(T0 + 1);
+      fxSources.push(ns);
+      a.n.hp.frequency.setValueAtTime(10, L0);
+      a.n.hp.frequency.exponentialRampToValueAtTime(700, T0);
+      drop();
+      break;
+    }
+    case "stutter": {
+      // Dernière mesure de A hachée : croches, puis doubles croches.
+      xa.setValueAtTime(1, L0);
+      for (let i = 0; i < 12; i++) {
+        const sub = i < 4 ? 0.5 : 0.25;
+        const t = i < 4 ? L0 + i * 0.5 * beatA : L0 + 2 * beatA + (i - 4) * 0.25 * beatA;
+        xa.setValueAtTime(1, t);
+        xa.setValueAtTime(0, t + sub * beatA * 0.55);
+      }
+      drop();
+      break;
+    }
   }
 
-  // Échange des basses au milieu, sur le temps le plus proche.
-  const sa = a.n.swap.gain, sb = b.n.swap.gain;
-  for (const g of [sa, sb]) g.cancelScheduledValues(now);
-  sa.setValueAtTime(0, now);
-  if (djOpts.bassSwap && djOpts.fade !== "cut") {
-    sb.setValueAtTime(-40, now);
-    sa.setValueAtTime(0, mid - 0.03);
-    sa.linearRampToValueAtTime(-40, mid + 0.03);
-    sb.setValueAtTime(-40, mid - 0.03);
-    sb.linearRampToValueAtTime(0, mid + 0.03);
-  } else sb.setValueAtTime(0, now);
-
-  mix = { from: a.id, to: b.id, T0, T1, D, bars, bpmA, endBpm, k, armed: false, preview: opts.preview || null };
+  lastStyle = style;
+  plannedStyle = null;
+  mix = { from: a.id, to: b.id, T0, T1, D, bars, bpmA, endBpm, k, style, blend: !!st.blend, ramp, armed: false, preview: opts.preview || null };
   renderAll();
 }
 
@@ -407,10 +671,7 @@ function finishMix() {
   mix = null;
   const a = decks[m.from], b = decks[m.to];
   pause(a);
-  for (const d of [a, b]) {
-    d.n.swap.gain.cancelScheduledValues(0);
-    d.n.swap.gain.value = 0;
-  }
+  for (const d of [a, b]) resetFx(d, dctx.currentTime);
   b.n.x.gain.cancelScheduledValues(0);
   b.n.x.gain.value = 1;
   a.n.x.gain.cancelScheduledValues(0);
@@ -438,10 +699,15 @@ function cancelMix(byUser = false) {
     b.playing = false;
     b.pos = b.inPt;
   }
+  stopFxSources();
   for (const d of [a, b]) {
-    d.n.swap.gain.cancelScheduledValues(0);
-    d.n.swap.gain.value = 0;
-    if (d.playing) setRate(d, rateAt(d, dctx.currentTime));
+    resetFx(d, dctx.currentTime);
+    for (const s of [d.n.echoSend.gain, d.n.verbSend.gain]) s.value = 0;
+    if (d.playing) {
+      // Un effet a pu couper la lecture normale de A : on la relance où elle en est.
+      if (d === a && dctx.currentTime >= m.T0 - STYLES[m.style].lead * (60 / m.bpmA)) startSource(d, dctx.currentTime + 0.02, posAt(d));
+      else setRate(d, rateAt(d, dctx.currentTime));
+    }
   }
   applyX();
   renderAll();
@@ -459,8 +725,9 @@ function startMix(now) {
   }
   const t = dctx.currentTime;
   const pos = posAt(a, t);
-  let target = now || pos > a.outPt - 0.05 ? nextBar(a, pos + 0.25 * rateAt(a, t)) : a.outPt;
-  if (!djOpts.sync) target = pos + 0.3;
+  const lead = leadSeconds(nextStyle(), a) * rateAt(a, t);
+  let target = now || pos > a.outPt - lead - 0.05 ? nextBar(a, pos + lead + 0.25 * rateAt(a, t)) : a.outPt;
+  if (!djOpts.sync) target = pos + lead + 0.3;
   mix = { from: a.id, to: other(a.id), target, armed: true };
   renderMixer();
 }
@@ -509,10 +776,17 @@ function tick() {
     if (!a.playing) cancelMix();
     else {
       const T0 = timeOfPos(a, mix.target);
-      if (T0 - t < 0.35) {
+      const style = nextStyle();
+      const lead = leadSeconds(style, a);
+      if (T0 - t < lead + 0.35) {
         const preview = mix.previewSaved;
         mix = null;
-        schedule(Math.max(T0, t + 0.05), { preview });
+        // Trop tard pour l'effet en entier : on prend la mesure suivante.
+        if (T0 - t < lead + 0.05) {
+          mix = { from: a.id, to: other(a.id), target: nextBar(a, posAt(a, t) + (lead + 0.3) * rateAt(a, t)), armed: true, previewSaved: preview };
+          return;
+        }
+        schedule(T0, { preview, style });
       }
     }
   } else if (mix && t >= mix.T1) finishMix();
@@ -520,8 +794,11 @@ function tick() {
     // Point de transition auto : on arme dès que A joue et que B attend.
     const a = decks[masterDeck], b = decks[other(masterDeck)];
     const key = `${a.track.path}|${a.outPt}`;
-    if (a.playing && !b.playing && posAt(a, t) < a.outPt - 0.1 && autoSkip !== key)
-      mix = { from: a.id, to: b.id, target: a.outPt, armed: true, auto: true };
+    const pos = posAt(a, t);
+    const lead = (leadSeconds(nextStyle(), a) + 0.3) * rateAt(a, t);
+    // Déjà trop près (ou un peu après) du point de sortie : prochaine mesure possible.
+    if (a.playing && !b.playing && autoSkip !== key && pos < a.outPt + 32 * beatLen(a))
+      mix = { from: a.id, to: b.id, target: pos < a.outPt - lead ? a.outPt : nextBar(a, pos + lead), armed: true, auto: true };
   }
   if (mix?.auto && !djOpts.autoPoint) mix = null;
 }
@@ -779,7 +1056,24 @@ function renderMixer() {
   else if (djOpts.sync) tempo = `${b.id} calé à ${fmtBpm(bpmA)} BPM`;
   else tempo = "sans synchro";
   if (k !== 1) tempo += k === 2 ? " (B en double tempo)" : " (B en demi-tempo)";
-  plan.textContent = `${parts.join(", ")}. ${bars} mesures, ${tempo}.`;
+  const style = nextStyle();
+  const st = STYLES[style];
+  plan.replaceChildren(`${parts.join(", ")}. ${st.blend ? bars + " mesures, " : ""}${tempo}. `);
+  const sb = document.createElement("b");
+  sb.textContent = `Style : ${st.label}`;
+  sb.title = st.hint;
+  plan.append(sb);
+  if (djOpts.vary && djOpts.styles.length > 1 && !(mix && !mix.armed)) {
+    const re = document.createElement("button");
+    re.className = "link reroll";
+    re.textContent = "↻ autre";
+    re.title = "Tirer un autre style";
+    re.onclick = () => {
+      plannedStyle = pickStyle();
+      renderMixer();
+    };
+    plan.append(" ", re);
+  }
 }
 
 function setStatus() {
@@ -788,15 +1082,17 @@ function setStatus() {
   const a = decks[masterDeck];
   if (mix && !mix.armed) {
     const done = Math.max(0, (t - mix.T0) / mix.D);
-    if (t < mix.T0) s.textContent = "Départ sur la mesure…";
-    else {
+    const name = STYLES[mix.style].label;
+    if (t < mix.T0) s.textContent = `${name} · B tombe sur la mesure…`;
+    else if (mix.blend) {
       const bpm = mix.bpmA + (mix.endBpm - mix.bpmA) * Math.min(1, done);
-      s.textContent = `Transition ${Math.min(mix.bars, Math.floor(done * mix.bars) + 1)}/${mix.bars} mesures · ${fmtBpm(bpm)} BPM`;
-    }
-    $("#xfader").value = Math.round(Math.min(1, done) * 1000 * (mix.to === "B" ? 1 : -1) + (mix.to === "B" ? 0 : 1000));
+      s.textContent = `${name} ${Math.min(mix.bars, Math.floor(done * mix.bars) + 1)}/${mix.bars} mesures · ${fmtBpm(bpm)} BPM`;
+    } else s.textContent = `${name} · ${fmtBpm(effBpm(decks[mix.to], t))} BPM`;
+    const x = mix.blend ? Math.min(1, done) : t >= mix.T0 ? 1 : 0;
+    $("#xfader").value = Math.round(x * 1000 * (mix.to === "B" ? 1 : -1) + (mix.to === "B" ? 0 : 1000));
   } else if (mix?.armed) {
     const left = (mix.target - posAt(decks[mix.from], t)) / rateAt(decks[mix.from], t);
-    s.textContent = `${mix.previewSaved ? "Pré-écoute : transition" : "Transition"} dans ${fmtT(left)}`;
+    s.textContent = `${mix.previewSaved ? "Pré-écoute : " : ""}${STYLES[nextStyle()].label} dans ${fmtT(left)}`;
   } else if (a.playing && a.grid) s.textContent = `${fmtBpm(effBpm(a, t))} BPM`;
   else s.textContent = canMix() ? "Prêt" : "Charge deux morceaux";
 }
@@ -1182,12 +1478,45 @@ $("#xfader").oninput = () => {
 
 function renderOpts() {
   for (const b of document.querySelectorAll("#mix-opts .switch")) b.setAttribute("aria-checked", djOpts[b.dataset.opt] ? "true" : "false");
+  for (const c of document.querySelectorAll("#style-chips button")) c.classList.toggle("on", djOpts.styles.includes(c.dataset.style));
   for (const seg of document.querySelectorAll("#mix-opts .segmented"))
     for (const b of seg.children) b.classList.toggle("on", b.dataset.v === String(djOpts[seg.dataset.opt]));
   // La rampe n'a de sens qu'avec les battements alignés.
   document.querySelector('[data-opt="ramp"]').closest(".opt").classList.toggle("off", !djOpts.sync);
 }
+// Pastilles des styles : plusieurs cochés si « Varier », sinon un seul.
+const chips = $("#style-chips");
+for (const [k, st] of Object.entries(STYLES)) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.dataset.style = k;
+  b.textContent = st.label;
+  b.title = st.hint;
+  chips.appendChild(b);
+}
+chips.onclick = (e) => {
+  const k = e.target.closest("button")?.dataset.style;
+  if (!k) return;
+  if (!djOpts.vary) djOpts.styles = [k];
+  else if (djOpts.styles.includes(k)) {
+    if (djOpts.styles.length > 1) djOpts.styles = djOpts.styles.filter((x) => x !== k);
+  } else djOpts.styles = [...djOpts.styles, k];
+  plannedStyle = djOpts.vary ? null : k;
+  saveOpts();
+  renderOpts();
+  renderMixer();
+};
+$("#style-all").onclick = () => {
+  djOpts.styles = Object.keys(STYLES);
+  djOpts.vary = true;
+  plannedStyle = null;
+  saveOpts();
+  renderOpts();
+  renderMixer();
+};
+
 $("#mix-opts").onclick = (e) => {
+  if (e.target.closest("#style-chips, #style-all")) return;
   const sw = e.target.closest(".switch");
   const seg = e.target.closest(".segmented button");
   if (sw) djOpts[sw.dataset.opt] = !djOpts[sw.dataset.opt];
@@ -1196,6 +1525,11 @@ $("#mix-opts").onclick = (e) => {
   saveOpts();
   if (sw?.dataset.opt === "keylock") for (const d of Object.values(decks)) setKeylock(d, djOpts.keylock);
   if (sw?.dataset.opt === "autoPoint" && !djOpts.autoPoint && mix?.auto) mix = null;
+  if (sw?.dataset.opt === "vary") {
+    if (!djOpts.vary) djOpts.styles = [nextStyle()];
+    plannedStyle = null;
+    saveOpts();
+  }
   renderOpts();
   renderMixer();
 };
@@ -1434,5 +1768,5 @@ audio.addEventListener("play", () => {
 
 Object.assign(window, { djShow, loadDeck, editNote, exportCsv });
 // Pour les tests.
-window.__dj = { decks, posAt, rateAt, beatIndex, effBpm, seek, play, getMix: () => mix, ctx: () => dctx };
+window.__dj = { level: () => { const a = new Float32Array(2048); fx.meter.getFloatTimeDomainData(a); return Math.sqrt(a.reduce((s, v) => s + v * v, 0) / a.length); }, decks, posAt, rateAt, beatIndex, effBpm, seek, play, getMix: () => mix, ctx: () => dctx };
 })();
