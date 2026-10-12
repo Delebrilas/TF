@@ -353,6 +353,15 @@ pub struct Grid {
     pub intro_beats: u32,
     /// Intro exploitable pour mixer : au moins 16 temps de rythmique sans mélodie.
     pub dj_intro: bool,
+    /// Premier temps où la musique démarre (secondes).
+    pub first_beat: f64,
+    /// Début de l'outro (secondes), calé sur une mesure.
+    pub outro_start: Option<f64>,
+    pub outro_beats: u32,
+    /// Point d'entrée conseillé (début de l'intro).
+    pub mix_in: f64,
+    /// Point de sortie conseillé (début de l'outro ou dernière phrase utile).
+    pub mix_out: f64,
 }
 
 const GRID_HOP: usize = 256;
@@ -446,6 +455,36 @@ fn beat_phase(env: &[f32], period: f64) -> f64 {
     best.0
 }
 
+/// Affine le tempo (±0,4 BPM) : sur un morceau entier, 0,05 BPM d'erreur
+/// décale la grille de plus d'un demi-temps.
+fn refine_bpm(env: &[f32], fps: f64, bpm: f64) -> (f64, f64) {
+    let score = |bpm: f64| -> (f64, f32) {
+        let period = 60.0 * fps / bpm;
+        let phi = beat_phase(env, period);
+        let mut sum = 0f32;
+        let mut n = 0;
+        let mut t = phi;
+        while (t as usize) < env.len() {
+            sum += env[t as usize];
+            n += 1;
+            t += period;
+        }
+        (phi, sum / n.max(1) as f32)
+    };
+    let mut best = (bpm, score(bpm));
+    for step in [0.05, 0.01] {
+        let center = best.0;
+        for i in -8i32..=8 {
+            let cand = center + i as f64 * step;
+            let sc = score(cand);
+            if sc.1 > best.1 .1 * 1.0005 {
+                best = (cand, sc);
+            }
+        }
+    }
+    ((best.0 * 100.0).round() / 100.0, best.1 .0)
+}
+
 pub fn grid_samples(samples: &[f32], sr: u32, bpm_hint: Option<f64>) -> Result<Grid> {
     let (mono, dsr) = downsample(samples, sr as f64);
     let duration = mono.len() as f64 / dsr;
@@ -456,47 +495,85 @@ pub fn grid_samples(samples: &[f32], sr: u32, bpm_hint: Option<f64>) -> Result<G
     // Phase : enveloppe d'attaque fine (fenêtres de 5,8 ms) pour une grille précise.
     let env = attack_envelope(&mono);
     let fps = dsr / ATTACK_HOP as f64;
-    let period = 60.0 * fps / bpm;
-    let phi = beat_phase(&env, period);
+    let (bpm, phi) = refine_bpm(&env, fps, bpm);
     let beat = 60.0 / bpm;
     let mut offset = (phi * ATTACK_HOP as f64 + ATTACK_WIN as f64) / dsr + ATTACK_LAG;
     offset = offset.rem_euclid(beat);
 
-    // Intro : graves présents, médiums (mélodie, voix) encore discrets.
     let (low, mid) = band_energies(&mono, dsr);
     let gfps = dsr / GRID_HOP as f64;
     let mid_ref = median(&mid);
     let low_ref = median(&low);
     let per_beat = (beat * gfps).max(1.0) as usize;
     let beats_total = ((duration - offset) / beat) as usize;
+    // Énergies moyennes par temps.
+    let per: Vec<(f32, f32)> = (0..beats_total)
+        .map(|b| {
+            let start = ((offset + b as f64 * beat) * gfps) as usize;
+            let end = (start + per_beat).min(mid.len());
+            if start >= end {
+                return (0.0, 0.0);
+            }
+            let k = (end - start) as f32;
+            (low[start..end].iter().sum::<f32>() / k, mid[start..end].iter().sum::<f32>() / k)
+        })
+        .collect();
+    let loud = |b: usize| per[b].0 + per[b].1 > 0.08 * (low_ref + mid_ref);
+    let calm = |b: usize| per[b].1 <= 0.55 * mid_ref;
+    let has_beat = |b: usize| per[b].0 > 0.35 * low_ref;
+
+    // Premier temps où la musique commence.
+    let first = (0..per.len()).find(|&b| loud(b)).unwrap_or(0);
+    let last = (0..per.len()).rev().find(|&b| loud(b)).unwrap_or(per.len().saturating_sub(1));
+
+    // Intro : graves présents, médiums (mélodie, voix) encore discrets.
     let mut intro_beats = 0u32;
     let mut low_ok = 0u32;
-    for b in 0..beats_total.min(128) {
-        let start = ((offset + b as f64 * beat) * gfps) as usize;
-        let end = (start + per_beat).min(mid.len());
-        if start >= end {
+    for b in first..per.len().min(first + 128) {
+        if !calm(b) {
             break;
         }
-        let m = mid[start..end].iter().sum::<f32>() / (end - start) as f32;
-        let l = low[start..end].iter().sum::<f32>() / (end - start) as f32;
-        if m > 0.55 * mid_ref {
-            break;
-        }
-        if l > 0.35 * low_ref {
-            low_ok += 1;
-        }
+        low_ok += has_beat(b) as u32;
         intro_beats += 1;
     }
-    // Calé sur la mesure (4 temps).
     intro_beats -= intro_beats % 4;
-    let beat_present = intro_beats > 0 && low_ok as f64 >= intro_beats as f64 * 0.75;
+    let dj_intro = intro_beats >= 16 && low_ok as f64 >= intro_beats as f64 * 0.75;
+
+    // Outro : même critère en partant de la fin, calé sur les mesures depuis le premier temps.
+    let mut outro_beats = 0u32;
+    let mut b = last + 1;
+    while b > first && outro_beats < 128 && calm(b - 1) {
+        b -= 1;
+        outro_beats += 1;
+    }
+    let mut outro_start = last + 1 - outro_beats as usize;
+    let r = (outro_start - first) % 4;
+    if r != 0 {
+        outro_start += 4 - r;
+    }
+    let outro_beats = (last + 1).saturating_sub(outro_start) as u32;
+
+    // Sortie conseillée : début de l'outro s'il dure au moins 16 temps,
+    // sinon la dernière phrase de 16 temps qui laisse 32 temps avant la fin.
+    let mix_out = if outro_beats >= 16 {
+        outro_start
+    } else {
+        let room = (last + 1).saturating_sub(first).saturating_sub(32);
+        first + room - room % 16
+    };
+    let t = |b: usize| offset + b as f64 * beat;
     Ok(Grid {
         bpm,
         offset,
         duration,
-        intro_end: (intro_beats > 0).then(|| offset + intro_beats as f64 * beat),
+        first_beat: t(first),
+        intro_end: (intro_beats > 0).then(|| t(first + intro_beats as usize)),
         intro_beats,
-        dj_intro: beat_present && intro_beats >= 16,
+        dj_intro,
+        outro_start: (outro_beats > 0).then(|| t(outro_start)),
+        outro_beats,
+        mix_in: t(first),
+        mix_out: t(mix_out),
     })
 }
 
@@ -516,7 +593,7 @@ mod grid_tests {
         let bpm = 125.0;
         let beat = 60.0 / bpm;
         let first = 0.21;
-        let secs = 60.0;
+        let secs = first + 128.0 * beat;
         let n = (secs * sr as f64) as usize;
         let mut x = vec![0f32; n];
         for (i, v) in x.iter_mut().enumerate() {
@@ -527,7 +604,7 @@ mod grid_tests {
                     *v += (0.9 * (-since * 30.0).exp() * (2.0 * std::f64::consts::PI * 55.0 * since).sin()) as f32;
                 }
             }
-            if t >= first + 32.0 * beat {
+            if t >= first + 32.0 * beat && t < first + 96.0 * beat {
                 *v += (0.3 * (2.0 * std::f64::consts::PI * 880.0 * t).sin() + 0.2 * (2.0 * std::f64::consts::PI * 1320.0 * t).sin()) as f32;
             }
         }
@@ -536,6 +613,27 @@ mod grid_tests {
         assert!(err < 0.03, "offset {} au lieu de {first}", g.offset);
         assert!(g.dj_intro, "{g:?}");
         assert!((28..=32).contains(&g.intro_beats), "{g:?}");
+        assert!((28..=32).contains(&g.outro_beats), "{g:?}");
+        let out = first + 96.0 * beat;
+        assert!((g.mix_out - out).abs() < 4.0 * beat, "mix_out {} au lieu de {out}", g.mix_out);
+        assert!((g.mix_in - first).abs() < 0.03, "{g:?}");
+    }
+
+    /// Tempo de départ un peu faux (128,3 au lieu de 128) : corrigé.
+    #[test]
+    fn refines_bpm() {
+        let sr = 22050u32;
+        let bpm = 128.0;
+        let beat = 60.0 / bpm;
+        let n = (180.0 * sr as f64) as usize;
+        let x: Vec<f32> = (0..n)
+            .map(|i| {
+                let k = (i as f64 / sr as f64) % beat;
+                (0.9 * (-k * 30.0).exp() * (2.0 * std::f64::consts::PI * 60.0 * k).sin()) as f32
+            })
+            .collect();
+        let g = grid_samples(&x, sr, Some(128.3)).unwrap();
+        assert!((g.bpm - bpm).abs() <= 0.02, "{}", g.bpm);
     }
 
     /// Kick + charley sur les contretemps, plusieurs décalages : erreur < 10 ms.

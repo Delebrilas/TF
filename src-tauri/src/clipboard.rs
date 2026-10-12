@@ -6,7 +6,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
-fn supported(text: &str) -> Option<String> {
+pub fn supported(text: &str) -> Option<String> {
     let t = text.trim();
     if t.contains(char::is_whitespace) || t.len() > 500 {
         return None;

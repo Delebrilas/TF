@@ -1,6 +1,8 @@
 mod artwork;
 mod bpm;
 mod clipboard;
+mod desk;
+mod dj;
 mod history;
 mod jobs;
 mod key;
@@ -119,6 +121,15 @@ async fn rename_artist(paths: Vec<String>, artist: String) -> CmdResult<usize> {
     })
     .await
     .map_err(err)
+}
+
+/// Ajout depuis l'icône de la zone de notification.
+pub(crate) async fn queue_url(app: &AppHandle, url: String) -> CmdResult<usize> {
+    add_url(app.clone(), url, None).await.map(|r| r.added)
+}
+
+pub(crate) fn queue_files(app: &AppHandle, paths: Vec<String>) -> usize {
+    add_files(app.clone(), paths)
 }
 
 #[tauri::command]
@@ -240,6 +251,60 @@ async fn library_scan(st: State<'_, AppState>, hist: State<'_, history::History>
     tauri::async_runtime::spawn_blocking(move || library::scan(&roots, &sources)).await.map_err(err)
 }
 
+/// Grille de battements, intro/outro et points de mix (en cache).
+#[tauri::command]
+async fn beat_grid(dj: State<'_, dj::Dj>, path: String, bpm: Option<f64>) -> CmdResult<bpm::Grid> {
+    if let Some(g) = dj.cached_grid(&path) {
+        return Ok(g);
+    }
+    let p = path.clone();
+    let g = tauri::async_runtime::spawn_blocking(move || bpm::grid(std::path::Path::new(&p), bpm))
+        .await
+        .map_err(err)?
+        .map_err(err)?;
+    dj.store_grid(&path, &g);
+    Ok(g)
+}
+
+/// Grilles déjà calculées (pour afficher les intros DJ dans la bibliothèque).
+#[tauri::command]
+fn cached_grids(dj: State<dj::Dj>, paths: Vec<String>) -> std::collections::HashMap<String, bpm::Grid> {
+    paths.into_iter().filter_map(|p| dj.cached_grid(&p).map(|g| (p, g))).collect()
+}
+
+#[tauri::command]
+fn notes_get(dj: State<dj::Dj>) -> std::collections::HashMap<String, String> {
+    dj.notes()
+}
+
+#[tauri::command]
+fn note_set(dj: State<dj::Dj>, path: String, text: String) {
+    dj.set_note(&path, &text);
+}
+
+#[tauri::command]
+fn pairs_get(dj: State<dj::Dj>) -> Vec<dj::Pair> {
+    dj.pairs()
+}
+
+#[tauri::command]
+fn pair_add(dj: State<dj::Dj>, a: String, b: String, note: Option<String>) -> Vec<dj::Pair> {
+    dj.add_pair(&a, &b, note.as_deref().unwrap_or(""))
+}
+
+#[tauri::command]
+fn pair_remove(dj: State<dj::Dj>, a: String, b: String) -> Vec<dj::Pair> {
+    dj.remove_pair(&a, &b)
+}
+
+#[tauri::command]
+async fn export_csv(path: String, rows: Vec<Vec<String>>) -> CmdResult<usize> {
+    tauri::async_runtime::spawn_blocking(move || dj::write_csv(std::path::Path::new(&path), &rows))
+        .await
+        .map_err(err)?
+        .map_err(err)
+}
+
 /// Envoie des MP3 à la corbeille (récupérables depuis Windows).
 #[tauri::command]
 async fn trash_files(app: AppHandle, paths: Vec<String>) -> CmdResult<Vec<String>> {
@@ -257,6 +322,7 @@ async fn trash_files(app: AppHandle, paths: Vec<String>) -> CmdResult<Vec<String
     .await
     .map_err(err)?;
     history::forget_paths(&app, &done);
+    app.state::<dj::Dj>().forget_paths(&done);
     if done.is_empty() && !mp3.is_empty() {
         return Err("Impossible de mettre ces fichiers à la corbeille".into());
     }
@@ -382,6 +448,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_drag::init())
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| desk::show_window(app)))
         .setup(|app| {
             let handle = app.handle().clone();
             let s = settings::load(&handle);
@@ -394,6 +463,8 @@ pub fn run() {
             if let Ok(d) = handle.path().app_data_dir() {
                 spotify::init(d.join("spotify.json"));
             }
+            let data_dir = handle.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir().join("TrackFetcher"));
+            app.manage(dj::Dj::load(data_dir.join("dj")));
             app.manage(history::History(std::sync::Mutex::new(history::load(&handle))));
             app.manage(watch::WatchState(std::sync::Mutex::new(watch::load(&handle))));
             jobs::restore(&handle);
@@ -401,7 +472,21 @@ pub fn run() {
             watch::start_timer(handle.clone());
             clipboard::start(handle.clone());
             tools::start_maintenance(handle.clone());
+            if let Err(e) = desk::setup(&handle) {
+                eprintln!("zone de notification indisponible : {e}");
+            }
             Ok(())
+        })
+        .on_window_event(|w, ev| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = ev {
+                let app = w.app_handle();
+                let to_tray = app.state::<AppState>().settings.lock().unwrap().close_to_tray;
+                if to_tray && app.tray_by_id("main").is_some() {
+                    api.prevent_close();
+                    let _ = w.hide();
+                    desk::hint_tray_once(app);
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             get_state,
@@ -431,7 +516,15 @@ pub fn run() {
             watch_check,
             set_bpm,
             apply_bpm,
-            save_settings
+            save_settings,
+            beat_grid,
+            cached_grids,
+            notes_get,
+            note_set,
+            pairs_get,
+            pair_add,
+            pair_remove,
+            export_csv
         ])
         .run(tauri::generate_context!())
         .expect("erreur au lancement de TrackFetcher");

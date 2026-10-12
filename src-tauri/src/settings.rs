@@ -39,6 +39,10 @@ pub struct Settings {
     pub cookies_browser: String,
     /// Client ID de l'app développeur Spotify de l'utilisateur.
     pub spotify_client_id: String,
+    /// Notification Windows quand un morceau est prêt (fenêtre en arrière-plan).
+    pub notify: bool,
+    /// Fermer la fenêtre la range dans la zone de notification.
+    pub close_to_tray: bool,
 }
 
 pub const DEFAULT_TEMPLATE: &str = "{artist} - {title}";
@@ -64,6 +68,8 @@ impl Default for Settings {
             pulse: true,
             cookies_browser: String::new(),
             spotify_client_id: String::new(),
+            notify: true,
+            close_to_tray: true,
         }
     }
 }

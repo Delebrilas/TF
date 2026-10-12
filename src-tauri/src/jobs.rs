@@ -608,7 +608,7 @@ async fn run<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, cancel: Arc<Notify>
         crate::history::record(app, k, &final_path.display().to_string());
     }
     let display_cover = if settings.hd_cover { hd_cover.or(meta.cover.clone()) } else { meta.cover.clone() };
-    update(app, id, |j| {
+    let done = update(app, id, |j| {
         j.status = Status::Done;
         j.progress = 1.0;
         j.path = Some(final_path.display().to_string());
@@ -621,6 +621,9 @@ async fn run<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, cancel: Arc<Notify>
             j.cover = display_cover.or(j.cover.take());
         }
     });
+    if let Some(j) = done {
+        crate::desk::job_done(app, &j);
+    }
     Ok(())
 }
 

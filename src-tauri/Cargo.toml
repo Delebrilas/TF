@@ -16,7 +16,10 @@ trash = "5"
 sha2 = "0.10"
 base64 = "0.22"
 rand = "0.8"
-tauri = { version = "2", features = ["protocol-asset"] }
+tauri = { version = "2", features = ["protocol-asset", "tray-icon", "image-png"] }
+tauri-plugin-notification = "2"
+tauri-plugin-drag = "2"
+tauri-plugin-single-instance = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-clipboard-manager = "2"
