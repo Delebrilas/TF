@@ -29,4 +29,7 @@ jobs:
         if: always()
         working-directory: src-tauri
         shell: bash
-        run: grep -E "\||YouTube:|search|open.spotify|succès|erreur|panicked|test result" net.txt | head -40 | sed 's/^/::notice title=net::/' || true
+        run: |
+          grep -E "\||YouTube:|search|open.spotify|succès|erreur|panicked|test result" net.txt | tr -d '\r' | head -40 > res.txt || true
+          # 10 annotations max par étape : 5 lignes par annotation.
+          paste -d'~' - - - - - < res.txt | sed 's/~/ ¦ /g; s/^/::notice title=net::/'
