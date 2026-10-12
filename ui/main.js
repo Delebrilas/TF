@@ -41,7 +41,7 @@ function detect(url) {
   if (u.includes("soundcloud")) return "soundcloud";
   return "";
 }
-const isCollection = (u) => /\/playlist|\/album\/|spotify:album:|spotify:playlist:|\/sets\/|list=/i.test(u);
+const isCollection = (u) => /\/collection\/tracks|\/playlist|\/album\/|spotify:album:|spotify:playlist:|\/sets\/|list=/i.test(u);
 
 function toast(msg, isErr = false) {
   const el = document.createElement("div");
@@ -2087,12 +2087,101 @@ function trackMenu(e, t, list, i) {
   ]);
 }
 
+// ---------- Compte Spotify ----------
+
+let spotify = { connected: false, name: null };
+function renderSpotify() {
+  $("#sp-state").textContent = spotify.connected ? `Connecté${spotify.name ? " : " + spotify.name : ""}` : "Non connecté";
+  $("#sp-login").textContent = spotify.connected ? "Se déconnecter" : "Se connecter";
+  $("#sp-login").className = spotify.connected ? "ghost small" : "primary small";
+  $("#btn-myplaylists").classList.toggle("hidden", !spotify.connected);
+}
+$("#sp-login").onclick = async () => {
+  if (spotify.connected) {
+    await invoke("spotify_logout");
+    spotify = { connected: false, name: null };
+    return renderSpotify();
+  }
+  const id = $("#s-spid").value.trim();
+  if (id !== settings.spotify_client_id) await saveSettings({ spotify_client_id: id });
+  const b = $("#sp-login");
+  b.disabled = true;
+  b.textContent = "Termine dans le navigateur…";
+  try {
+    spotify = await invoke("spotify_login");
+    toast(`Connecté à Spotify${spotify.name ? " : " + spotify.name : ""}`);
+  } catch (e) {
+    toast(String(e), true);
+  } finally {
+    b.disabled = false;
+    renderSpotify();
+  }
+};
+$("#s-spid").onchange = (e) => saveSettings({ spotify_client_id: e.target.value.trim() });
+document.querySelector(".howto").onclick = (e) => {
+  const a = e.target.closest("a[data-url]");
+  if (!a) return;
+  e.preventDefault();
+  openSource(a.dataset.url);
+};
+
+async function openMyPlaylists() {
+  const list = $("#mp-list");
+  list.innerHTML = `<p class="muted">Chargement de tes playlists…</p>`;
+  $("#myplaylists").classList.remove("hidden");
+  let pls;
+  try {
+    pls = await invoke("spotify_playlists");
+  } catch (e) {
+    list.replaceChildren(Object.assign(document.createElement("p"), { className: "err-text", textContent: String(e) }));
+    return;
+  }
+  list.replaceChildren();
+  for (const p of pls) {
+    const row = document.createElement("div");
+    row.className = "mp-row";
+    row.innerHTML = `<span class="mp-cover"><svg><use href="#i-note"/></svg><img alt=""/></span>
+      <span class="mp-meta"><b></b><small></small></span>
+      <button class="ghost small mp-follow" title="Télécharger puis récupérer les nouveautés automatiquement"><svg><use href="#i-eye"/></svg><span>Suivre</span></button>
+      <button class="primary small mp-dl"><svg><use href="#i-arrow"/></svg><span>Télécharger</span></button>`;
+    if (p.url.includes("/collection/")) row.querySelector(".mp-cover").classList.add("liked");
+    if (p.image) setImg(row.querySelector("img"), p.image);
+    row.querySelector("b").textContent = p.name;
+    row.querySelector("small").textContent = [
+      p.total != null ? `${p.total} titre${p.total > 1 ? "s" : ""}` : null,
+      p.owner,
+      p.readable ? null : "lien public uniquement",
+    ].filter(Boolean).join(" · ");
+    row.querySelector(".mp-dl").onclick = () => {
+      $("#myplaylists").classList.add("hidden");
+      addUrl(p.url);
+    };
+    row.querySelector(".mp-follow").onclick = async () => {
+      $("#myplaylists").classList.add("hidden");
+      try {
+        const n = await invoke("watch_add", { url: p.url, downloadExisting: true });
+        toast(n ? `Playlist suivie, ${n} morceaux en file` : "Playlist suivie");
+        showView("watch");
+      } catch (e) {
+        toast(String(e), true);
+      }
+    };
+    list.appendChild(row);
+  }
+}
+$("#btn-myplaylists").onclick = openMyPlaylists;
+$("#mp-close").onclick = () => $("#myplaylists").classList.add("hidden");
+$("#myplaylists").onclick = (e) => e.target.id === "myplaylists" && $("#myplaylists").classList.add("hidden");
+document.addEventListener("keydown", (e) => e.key === "Escape" && $("#myplaylists").classList.add("hidden"));
+
 // ---------- Démarrage ----------
 
 (async () => {
   const snap = await invoke("get_state");
   settings = snap.settings;
   fillSettings();
+  $("#s-spid").value = settings.spotify_client_id || "";
+  invoke("spotify_status").then((s) => ((spotify = s), renderSpotify()));
   showTools(snap.tools);
   snap.jobs.forEach(render);
   renderWatched(snap.watched);

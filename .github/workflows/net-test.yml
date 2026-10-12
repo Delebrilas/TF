@@ -21,4 +21,12 @@ jobs:
       - run: yt-dlp --version
       - name: Tests réseau (YouTube, SoundCloud, Spotify)
         working-directory: src-tauri
-        run: cargo test --release net_ -- --ignored --nocapture --test-threads=1
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --release net_ -- --ignored --nocapture --test-threads=1 2>&1 | tee net.txt
+      - name: Résultats en annotations
+        if: always()
+        working-directory: src-tauri
+        shell: bash
+        run: grep -E "\||YouTube:|search|open.spotify|succès|erreur|panicked|test result" net.txt | head -40 | sed 's/^/::notice title=net::/' || true

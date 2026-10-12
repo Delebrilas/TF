@@ -57,6 +57,7 @@
       <button data-view="watch">Playlists suivies <span class="badge" id="badge-watch"></span></button>
     </nav>
     <div class="top-actions">
+      <button class="icon sp hidden" id="btn-myplaylists" title="Mes playlists Spotify"><svg><use href="#i-spotify"/></svg></button>
       <button class="icon" id="btn-files" title="Analyser le BPM de MP3 existants"><svg><use href="#i-file"/></svg></button>
       <button class="icon" id="btn-folder" title="Ouvrir le dossier de sortie"><svg><use href="#i-folder"/></svg></button>
       <button class="icon" id="btn-theme" title="Mode clair / sombre"><svg><use href="#i-moon"/></svg></button>
@@ -305,7 +306,26 @@
       </div>
 
       <div class="field">
-        <span>Session YouTube <small class="muted">(contre la vérification anti-robot)</small></span>
+        <span>Compte Spotify <small class="muted">(playlists privées et titres likés)</small></span>
+        <div class="account">
+          <svg class="sp-logo"><use href="#i-spotify"/></svg>
+          <span id="sp-state">Non connecté</span>
+          <button class="primary small" id="sp-login" type="button">Se connecter</button>
+        </div>
+        <input id="s-spid" type="text" spellcheck="false" placeholder="Client ID de ton app Spotify" />
+        <details class="howto">
+          <summary>Obtenir un Client ID (une seule fois)</summary>
+          <ol>
+            <li>Ouvre <a href="#" data-url="https://developer.spotify.com/dashboard">developer.spotify.com/dashboard</a> et connecte-toi.</li>
+            <li>« Create app » : nom libre, Redirect URI <code>http://127.0.0.1:47823/callback</code>, coche « Web API ».</li>
+            <li>Copie le « Client ID » de l'app et colle-le ci-dessus.</li>
+          </ol>
+          <small class="muted">Spotify exige un compte Premium pour le créateur de l'app. Seules tes playlists (et les collaboratives) sont lisibles ; celles des autres passent par leur lien public.</small>
+        </details>
+      </div>
+
+      <div class="field">
+        <span>Session du navigateur <small class="muted">(YouTube et SoundCloud)</small></span>
         <div class="segmented" id="s-cookies">
           <button data-v="">Aucune</button>
           <button data-v="firefox">Firefox</button>
@@ -313,7 +333,7 @@
           <button data-v="chrome">Chrome</button>
           <button data-v="brave">Brave</button>
         </div>
-        <small class="muted">Utilise la connexion YouTube de ce navigateur. Firefox fonctionne le mieux ; Chrome, Edge et Brave doivent être fermés pendant les téléchargements.</small>
+        <small class="muted">Utilise tes connexions YouTube et SoundCloud de ce navigateur : vidéos soumises à l'âge, playlists SoundCloud privées et tes likes (colle <b>soundcloud.com/ton-nom/likes</b>). Firefox fonctionne le mieux ; Chrome, Edge et Brave doivent être fermés pendant les téléchargements.</small>
       </div>
 
       <div class="toggle">
@@ -363,6 +383,16 @@
     <button class="icon sm" id="sel-close" title="Désélectionner (Échap)"><svg><use href="#i-x"/></svg></button>
   </div>
   <div class="ctx hidden" id="ctx"></div>
+
+  <div class="modal hidden" id="myplaylists">
+    <div class="modal-card wide">
+      <div class="modal-head">
+        <h3>Mes playlists Spotify</h3>
+        <button class="icon" id="mp-close" title="Fermer"><svg><use href="#i-x"/></svg></button>
+      </div>
+      <div id="mp-list"></div>
+    </div>
+  </div>
 
   <div class="modal hidden" id="merge">
     <div class="modal-card">

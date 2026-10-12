@@ -388,6 +388,29 @@ mod tests {
         assert_eq!(parse_callback(denied).2.as_deref(), Some("access_denied"));
     }
 
+    /// Boucle complète jusqu'à l'échange du code : le navigateur simulé
+    /// revient sur 127.0.0.1 avec le bon `state`.
+    #[test]
+    fn callback_flow_reaches_token_exchange() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let r = rt.block_on(login("0123456789abcdef0123456789abcdef", |url| {
+            assert!(url.contains("code_challenge_method=S256"));
+            assert!(url.contains(&urlencoding::encode(REDIRECT_URI).to_string()));
+            let state = url.split("state=").nth(1).unwrap().to_string();
+            tokio::spawn(async move {
+                let mut s = tokio::net::TcpStream::connect(("127.0.0.1", PORT)).await.unwrap();
+                s.write_all(format!("GET /callback?code=abc&state={state} HTTP/1.1\r\nHost: x\r\n\r\n").as_bytes()).await.unwrap();
+                let mut page = String::new();
+                let _ = s.read_to_string(&mut page).await;
+                assert!(page.contains("Connecté à Spotify"));
+            });
+            Ok(())
+        }));
+        // Hors ligne, l'échange échoue ; en ligne, Spotify refuse le faux code.
+        let e = r.err().expect("le faux code ne peut pas aboutir").to_string();
+        assert!(!e.contains("Délai") && !e.contains("port"), "{e}");
+    }
+
     #[test]
     fn reads_new_and_old_item_shapes() {
         let t = serde_json::json!({"type":"track","name":"One More Time","uri":"spotify:track:1","duration_ms":320000,

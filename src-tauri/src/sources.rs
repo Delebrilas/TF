@@ -63,7 +63,7 @@ pub fn detect(url: &str) -> Source {
 /// Vrai si le lien désigne une collection (playlist, album, set).
 pub fn is_collection(url: &str) -> bool {
     let u = url.to_lowercase();
-    u.contains("/playlist") || u.contains("/album/") || u.contains("spotify:album:") || u.contains("/sets/") || u.contains("list=")
+    u.contains("/collection/tracks") || u.contains("/likes") || u.contains("/playlist") || u.contains("/album/") || u.contains("spotify:album:") || u.contains("/sets/") || u.contains("list=")
 }
 
 pub fn http() -> reqwest::Client {

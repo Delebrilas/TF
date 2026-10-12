@@ -663,3 +663,26 @@ body:has(#player.hidden) .selbar { bottom: 24px; }
 .ctx button:hover { background: var(--card-hover); }
 .ctx button svg { width: 16px; height: 16px; color: var(--muted); }
 .ctx hr { border: 0; border-top: 1px solid var(--line); margin: 4px 6px; }
+
+/* ---------- Comptes ---------- */
+.account { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); }
+.account #sp-state { flex: 1; font-size: 13px; }
+.sp-logo { color: var(--spotify); width: 22px; height: 22px; }
+button.ghost.small { height: 34px; padding: 0 12px; }
+.howto { font-size: 12px; color: var(--muted); }
+.howto summary { cursor: pointer; color: var(--accent); font-weight: 600; }
+.howto ol { margin: 8px 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.howto a { color: var(--accent); }
+.howto code { user-select: all; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 1px 5px; color: var(--text); }
+button.icon.sp { color: var(--spotify); }
+.modal-card.wide { width: min(680px, 100%); }
+.mp-row { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto auto; gap: 12px; align-items: center; padding: 8px; border-radius: 12px; }
+.mp-row:hover { background: var(--card-hover); }
+.mp-cover { position: relative; width: 52px; height: 52px; border-radius: 8px; overflow: hidden; background: var(--grad); display: grid; place-items: center; color: #fff; }
+.mp-cover.liked { background: linear-gradient(135deg, #4b2bd6, #8fd1c4); }
+.mp-cover img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.mp-cover img:not([src]) { display: none; }
+.mp-meta { min-width: 0; display: flex; flex-direction: column; }
+.mp-meta b, .mp-meta small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mp-meta small { color: var(--muted); font-size: 12px; }
+.err-text { color: var(--err); }
