@@ -678,6 +678,7 @@ function finishMix() {
   a.n.x.gain.value = 0;
   $("#xfader").value = b.id === "A" ? 0 : 1000;
   masterDeck = b.id;
+  dirByHand = false;
   a.spent = true;
   lastMix = { a: a.track.path, b: b.track.path };
   if (djOpts.ramp && djOpts.sync) b.pitch = 0;
@@ -766,14 +767,17 @@ function endPreview(saved) {
 }
 let previewTimer = null;
 let lastMix = null;
+let dirByHand = false; // sens imposé par ⇄ : la platine qui joue ne le change plus
 
 // Boucle : arme la transition à l'approche du point, met à jour l'affichage.
 function tick() {
   if (!dctx) return;
   const t = dctx.currentTime;
   // Le sens suit la platine qui joue : on peut mixer A → B comme B → A.
-  if (!mix) {
-    const playing = Object.values(decks).filter((d) => d.playing);
+  // Sauf si le sens a été choisi à la main (⇄).
+  const playing = Object.values(decks).filter((d) => d.playing);
+  if (!playing.length) dirByHand = false;
+  if (!mix && !dirByHand) {
     if (playing.length === 1 && playing[0].id !== masterDeck) {
       masterDeck = playing[0].id;
       plannedStyle = null;
@@ -1044,8 +1048,8 @@ function renderMixer() {
   const ok = canMix();
   const go = $("#mix-go");
   go.disabled = !ok && !mix;
-  // Inverser le sens : possible tant qu'aucune transition n'est lancée et que la cible ne joue pas seule.
-  $("#mix-swap").disabled = !ok || !!(mix && !mix.auto) || (a.playing && !b.playing);
+  // Inverser le sens : toujours possible, sauf pendant une transition lancée à la main.
+  $("#mix-swap").disabled = !ok || !!(mix && !mix.auto);
   $("#mix-preview").disabled = !ok || !!(mix && !mix.armed);
   $("#mix-pair").disabled = !(a.track && b.track);
   const arrow = `${a.id} → ${b.id}`;
@@ -1485,6 +1489,8 @@ $("#mix-swap").onclick = () => {
   if (mix && !mix.auto) return;
   mix = null;
   masterDeck = other(masterDeck);
+  plannedStyle = null;
+  dirByHand = true;
   renderAll();
 };
 $("#mix-preview").onclick = preview;
