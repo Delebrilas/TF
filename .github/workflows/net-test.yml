@@ -1,0 +1,24 @@
+name: Tests réseau
+
+on:
+  push:
+    branches: ["v0.*"]
+  workflow_dispatch:
+
+jobs:
+  net:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: pip install -U yt-dlp
+      - run: yt-dlp --version
+      - name: Tests réseau (YouTube, SoundCloud, Spotify)
+        working-directory: src-tauri
+        run: cargo test --release net_ -- --ignored --nocapture --test-threads=1

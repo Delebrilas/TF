@@ -1992,6 +1992,7 @@ function keyUrl(k) {
   if (id.startsWith("http")) return id;
   if (src === "youtube") return "https://www.youtube.com/watch?v=" + id;
   if (src === "spotify" && id.startsWith("spotify:track:")) return "https://open.spotify.com/track/" + id.slice(14);
+  if (src === "soundcloud" && /^\d+$/.test(id)) return `https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/tracks/${id}&visual=true`;
   return null;
 }
 const jobSourceUrl = (j) => (j.source === "local" ? null : keyUrl(j.source_key) || (/^https?:/.test(j.url) ? j.url : null));

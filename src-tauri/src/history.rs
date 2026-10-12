@@ -46,6 +46,10 @@ pub fn key_url(key: &str) -> Option<String> {
     match src {
         "youtube" => Some(format!("https://www.youtube.com/watch?v={id}")),
         "spotify" => id.strip_prefix("spotify:track:").map(|t| format!("https://open.spotify.com/track/{t}")),
+        // Identifiant numérique SoundCloud : le lecteur officiel redirige vers le morceau.
+        "soundcloud" if !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()) => {
+            Some(format!("https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/tracks/{id}&visual=true"))
+        }
         _ => None,
     }
 }
@@ -134,6 +138,7 @@ mod tests {
         assert_eq!(key_url("youtube:abc").as_deref(), Some("https://www.youtube.com/watch?v=abc"));
         assert_eq!(key_url("spotify:spotify:track:42").as_deref(), Some("https://open.spotify.com/track/42"));
         assert_eq!(key_url("soundcloud:https://soundcloud.com/a/b").as_deref(), Some("https://soundcloud.com/a/b"));
-        assert_eq!(key_url("soundcloud:12345"), None);
+        assert!(key_url("soundcloud:12345").unwrap().contains("api.soundcloud.com/tracks/12345"));
+        assert_eq!(key_url("soundcloud:abc"), None);
     }
 }

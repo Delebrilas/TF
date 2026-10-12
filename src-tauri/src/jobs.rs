@@ -310,7 +310,7 @@ fn fail<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, msg: String) {
             delay = Some(secs);
         } else {
             j.status = Status::Error;
-            j.error = Some(msg);
+            j.error = Some(friendly(&msg));
             j.note = None;
         }
     });
@@ -369,44 +369,73 @@ async fn run<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, cancel: Arc<Notify>
         (PathBuf::from(job.path.clone().unwrap_or_default()), None)
     } else {
         let mut tools = tools::require(app)?;
-        let mut url = job.url.clone();
-        if job.source == Source::Spotify && url.is_empty() {
+        let meta = Meta {
+            title: job.title.clone(),
+            artist: job.artist.clone(),
+            duration: job.duration,
+            ..Default::default()
+        };
+        // Candidats essayés dans l'ordre : le lien donné (ou la meilleure
+        // correspondance YouTube pour Spotify), puis d'autres mises en ligne
+        // du même morceau sur YouTube, puis SoundCloud.
+        let mut tried: Vec<String> = Vec::new();
+        let mut queue: Vec<String> = Vec::new();
+        if job.source == Source::Spotify && job.url.is_empty() {
             set_status(app, id, Status::Searching)?;
-            let meta = Meta {
-                title: job.title.clone(),
-                artist: job.artist.clone(),
-                duration: job.duration,
-                ..Default::default()
-            };
-            url = sources::find_on_youtube(&tools, &meta).await?;
+            queue = sources::find_matches(&tools, &meta, "ytsearch8").await.unwrap_or_default();
+        } else {
+            queue.push(job.url.clone());
         }
-        set_status(app, id, Status::Downloading)?;
-        let mut first = download(app, id, &tools, &url, &settings, cancel.clone()).await;
-        // Cookies illisibles (navigateur absent, ouvert ou chiffré) : on continue sans.
-        // Session YouTube refusée (« The page needs to be reloaded ») : idem.
-        if matches!(&first, Err(e) if tools::retry_without_cookies(&e.to_string())) && !tools.cookies.is_empty() {
-            tools = tools.without_cookies();
-            first = download(app, id, &tools, &url, &settings, cancel.clone()).await;
-        }
-        let (file, info) = match first {
-            Err(e) if (is_bot_check(&e.to_string()) || tools::is_stale_session(&e.to_string())) && sources::detect(&url) == Source::Youtube => {
-                // YouTube bloque : même morceau cherché sur SoundCloud.
-                let meta = Meta {
-                    title: job.title.clone(),
-                    artist: job.artist.clone(),
-                    duration: job.duration,
-                    ..Default::default()
-                };
-                let sc = if meta.title.is_some() { sources::find_on_soundcloud(&tools, &meta).await.ok() } else { None };
-                let Some(sc) = sc else { return Err(e) };
-                update(app, id, |j| {
-                    j.status = Status::Downloading;
-                    j.progress = 0.0;
-                    j.note = Some("YouTube bloqué, récupéré sur SoundCloud".into());
-                });
-                download(app, id, &tools, &sc, &settings, cancel).await?
+        let mut searched_yt = job.source == Source::Spotify;
+        let mut searched_sc = false;
+        let mut last_err: Option<anyhow::Error> = None;
+        let mut result = None;
+        loop {
+            if queue.is_empty() && meta.title.is_some() {
+                // Plus de candidat : on élargit la recherche.
+                if !searched_yt {
+                    searched_yt = true;
+                    set_status(app, id, Status::Searching)?;
+                    queue = sources::find_matches(&tools, &meta, "ytsearch8").await.unwrap_or_default();
+                } else if !searched_sc {
+                    searched_sc = true;
+                    set_status(app, id, Status::Searching)?;
+                    queue = sources::find_matches(&tools, &meta, "scsearch8").await.unwrap_or_default();
+                }
+                queue.retain(|u| !tried.contains(u));
             }
-            other => other?,
+            if queue.is_empty() || tried.len() >= 6 {
+                break;
+            }
+            let url = queue.remove(0);
+            tried.push(url.clone());
+            if tried.len() > 1 {
+                let why = last_err.as_ref().map(|e| short_reason(&e.to_string())).unwrap_or_default();
+                let target = if sources::detect(&url) == Source::Soundcloud { "SoundCloud" } else { "une autre version YouTube" };
+                update(app, id, |j| j.note = Some(format!("{why} : essai sur {target}")));
+            }
+            set_status(app, id, Status::Downloading)?;
+            let mut r = download(app, id, &tools, &url, &settings, cancel.clone()).await;
+            // Cookies illisibles ou session YouTube refusée : même lien sans cookies.
+            if matches!(&r, Err(e) if tools::retry_without_cookies(&e.to_string())) && !tools.cookies.is_empty() {
+                tools = tools.without_cookies();
+                r = download(app, id, &tools, &url, &settings, cancel.clone()).await;
+            }
+            match r {
+                Ok(ok) => {
+                    if tried.len() > 1 {
+                        let note = if sources::detect(&url) == Source::Soundcloud { "Récupéré sur SoundCloud" } else { "Récupéré sur une autre version YouTube" };
+                        update(app, id, |j| j.note = Some(note.into()));
+                    }
+                    result = Some(ok);
+                    break;
+                }
+                Err(e) if try_elsewhere(&e.to_string()) => last_err = Some(e),
+                Err(e) => return Err(e),
+            }
+        }
+        let Some((file, info)) = result else {
+            return Err(last_err.unwrap_or_else(|| anyhow!("Aucune correspondance trouvée")));
         };
         (file, Some(info))
     };
@@ -682,7 +711,8 @@ async fn download<R: tauri::Runtime>(
     let info = reader.await.ok().flatten();
     let err = err_reader.await.unwrap_or_default();
     if !status.success() {
-        return Err(anyhow!(friendly(&sources::last_error(&err))));
+        // Message brut de yt-dlp : il sert à choisir un repli ; traduit dans `fail`.
+        return Err(anyhow!(sources::last_error(&err)));
     }
     let info = info.ok_or_else(|| anyhow!("Fichier téléchargé introuvable"))?;
     let path = PathBuf::from(info["filepath"].as_str().unwrap_or_default());
@@ -699,14 +729,57 @@ fn is_bot_check(msg: &str) -> bool {
     msg == BOT_MESSAGE || m.contains("sign in to confirm") || m.contains("not a bot") || m.contains("confirm you")
 }
 
+/// Erreur propre à cette mise en ligne : une autre version peut passer.
+fn try_elsewhere(msg: &str) -> bool {
+    let m = msg.to_lowercase();
+    is_bot_check(msg)
+        || tools::is_stale_session(msg)
+        || m.contains("age-restricted")
+        || m.contains("age restricted")
+        || m.contains("confirm your age")
+        || m.contains("inappropriate for some users")
+        || m.contains("403")
+        || m.contains("forbidden")
+        || m.contains("drm")
+        || m.contains("unavailable")
+        || m.contains("not available")
+        || m.contains("private video")
+        || m.contains("copyright")
+        || m.contains("blocked it")
+        || m.contains("requested format is not available")
+}
+
+/// Raison courte affichée pendant le changement de source.
+fn short_reason(msg: &str) -> String {
+    let m = msg.to_lowercase();
+    if m.contains("age") && m.contains("restrict") || m.contains("confirm your age") {
+        "Vidéo soumise à l'âge"
+    } else if m.contains("403") || m.contains("forbidden") {
+        "YouTube a refusé le téléchargement"
+    } else if m.contains("drm") {
+        "Morceau protégé (DRM)"
+    } else if is_bot_check(msg) || tools::is_stale_session(msg) {
+        "YouTube bloque"
+    } else {
+        "Indisponible"
+    }
+    .into()
+}
+
 pub fn friendly(err: &str) -> String {
     let e = err.to_lowercase();
     if is_bot_check(err) {
         BOT_MESSAGE.into()
+    } else if e.contains("age-restricted") || e.contains("confirm your age") {
+        "Vidéo soumise à une limite d'âge, et aucune autre version n'a fonctionné. Choisis ton navigateur (connecté à YouTube) dans Réglages › Session YouTube puis réessaie.".into()
+    } else if e.contains("drm") {
+        "Morceau protégé (DRM) sur SoundCloud, et aucune autre version trouvée.".into()
+    } else if e.contains("403") || e.contains("forbidden") {
+        "YouTube a refusé le téléchargement (erreur 403), sur toutes les versions essayées. Réessaie plus tard : yt-dlp se met à jour tout seul.".into()
     } else if tools::is_stale_session(err) {
         "YouTube a refusé la vidéo (« The page needs to be reloaded »). Réessaie dans quelques minutes ; si ça continue, ouvre YouTube dans ton navigateur pour rafraîchir la session, ou choisis « Aucune » dans Réglages › Session YouTube.".into()
     } else if e.contains("could not copy") && e.contains("cookie") || e.contains("failed to decrypt") || e.contains("dpapi") {
-        "Impossible de lire les cookies du navigateur (failed). Ferme-le complètement, ou choisis Firefox dans Réglages › Session YouTube.".into()
+        "Impossible de lire les cookies du navigateur. Ferme-le complètement, ou choisis Firefox dans Réglages › Session YouTube.".into()
     } else if e.contains("private") {
         "Contenu privé.".into()
     } else if e.contains("unavailable") || e.contains("not available") {

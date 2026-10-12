@@ -184,17 +184,9 @@ pub fn parse_spotify_embed(html: &str, kind: &str) -> Result<Resolved> {
     Ok(Resolved { title: entity["name"].as_str().or(entity["title"].as_str()).map(String::from), tracks })
 }
 
-/// Cherche sur YouTube l'enregistrement correspondant à une piste Spotify.
-pub async fn find_on_youtube(tools: &Tools, meta: &Meta) -> Result<String> {
-    find_match(tools, meta, "ytsearch8").await
-}
 
-/// Même recherche sur SoundCloud (repli quand YouTube bloque).
-pub async fn find_on_soundcloud(tools: &Tools, meta: &Meta) -> Result<String> {
-    find_match(tools, meta, "scsearch8").await
-}
-
-async fn find_match(tools: &Tools, meta: &Meta, prefix: &str) -> Result<String> {
+/// Toutes les correspondances plausibles, de la meilleure à la moins bonne.
+pub async fn find_matches(tools: &Tools, meta: &Meta, prefix: &str) -> Result<Vec<String>> {
     let title = meta.title.clone().unwrap_or_default();
     let artist = meta.artist.clone().unwrap_or_default();
     let query = format!("{prefix}:{artist} - {title}");
@@ -207,19 +199,22 @@ async fn find_match(tools: &Tools, meta: &Meta, prefix: &str) -> Result<String> 
     }
     let v: Value = serde_json::from_slice(&out.stdout)?;
     let entries = v["entries"].as_array().cloned().unwrap_or_default();
-    let best = entries
+    let mut scored: Vec<(f64, &Value)> = entries
         .iter()
         .map(|e| (score_candidate(e, &title, &artist, meta.duration), e))
-        .max_by(|a, b| a.0.total_cmp(&b.0))
         .filter(|(s, _)| *s > -50.0)
-        .ok_or_else(|| anyhow!("Aucune correspondance trouvée"))?
-        .1;
-    if prefix.starts_with("yt") {
-        let id = best["id"].as_str().ok_or_else(|| anyhow!("Résultat YouTube invalide"))?;
-        Ok(format!("https://www.youtube.com/watch?v={id}"))
-    } else {
-        best["url"].as_str().or(best["webpage_url"].as_str()).map(String::from).ok_or_else(|| anyhow!("Résultat invalide"))
-    }
+        .collect();
+    scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+    Ok(scored
+        .into_iter()
+        .filter_map(|(_, e)| {
+            if prefix.starts_with("yt") {
+                e["id"].as_str().map(|id| format!("https://www.youtube.com/watch?v={id}"))
+            } else {
+                e["url"].as_str().or(e["webpage_url"].as_str()).map(String::from)
+            }
+        })
+        .collect())
 }
 
 pub fn normalize(s: &str) -> String {

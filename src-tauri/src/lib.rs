@@ -12,6 +12,8 @@ mod spotify;
 mod tags;
 mod tools;
 mod watch;
+#[cfg(test)]
+mod net_tests;
 
 use jobs::{AppState, Job, Status};
 use serde::Serialize;
