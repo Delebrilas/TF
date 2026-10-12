@@ -13,6 +13,13 @@ pub struct TagData {
     pub bpm_detail: Option<String>,
     pub key: Option<crate::key::Key>,
     pub cover: Option<Vec<u8>>,
+    /// Page d'origine (YouTube, SoundCloud, Spotify), écrite en WOAS.
+    pub source_url: Option<String>,
+}
+
+/// Lien vers la page d'origine (WOAS).
+pub fn source_of(tag: &Tag) -> Option<String> {
+    tag.get("WOAS").and_then(|f| f.content().link()).map(String::from).filter(|u| u.starts_with("http"))
 }
 
 pub fn read_basic(path: &Path) -> (Option<String>, Option<String>, Option<String>) {
@@ -87,6 +94,9 @@ pub fn write(path: &Path, d: &TagData) -> Result<()> {
             description: String::new(),
             data: data.clone(),
         });
+    }
+    if let Some(u) = &d.source_url {
+        tag.add_frame(id3::Frame::with_content("WOAS", id3::Content::Link(u.clone())));
     }
     tag.write_to_path(path, Version::Id3v23)?;
     Ok(())

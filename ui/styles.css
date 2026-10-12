@@ -141,7 +141,7 @@ main {
 .queue { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 
 .job {
-  display: grid; grid-template-columns: 56px 1fr auto auto; gap: 14px; align-items: center;
+  display: grid; grid-template-columns: 20px 56px 1fr auto auto; gap: 12px; align-items: center;
   background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
   padding: 10px 10px 10px 10px;
   animation: enter .25s ease-out;
@@ -316,7 +316,7 @@ select {
 }
 .lib-table { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 .lib-row {
-  display: grid; grid-template-columns: 52px minmax(0, 2.4fr) minmax(0, 1.4fr) minmax(0, 1fr) 54px 60px;
+  display: grid; grid-template-columns: 20px 44px minmax(0, 2.4fr) minmax(0, 1.4fr) minmax(0, 1fr) 54px 60px;
   gap: 12px; align-items: center; padding: 6px 14px; min-height: 52px; cursor: default;
 }
 .lib-row + .lib-row, #lib-rows .lib-row { border-top: 1px solid var(--line); }
@@ -613,3 +613,53 @@ body.ambient-on .topbar { background: color-mix(in srgb, var(--bg-2) 70%, transp
 
 .lib-tools .search input { width: 150px; }
 button.link.danger:hover { color: var(--err); }
+
+/* ---------- Sélection multiple ---------- */
+.check {
+  width: 20px; height: 20px; padding: 0; border-radius: 6px; flex: none; justify-content: center;
+  border: 1.5px solid var(--line); background: var(--bg); position: relative;
+  opacity: .0; transition: opacity .15s, background .15s, border-color .15s;
+}
+.job:hover .check, .lib-row:hover .check, .lib-header .check, .tile:hover .check,
+.selecting .check, .check[aria-checked=true], .check[aria-checked=mixed] { opacity: 1; }
+.check:hover { border-color: var(--accent); }
+.check[aria-checked=true], .check[aria-checked=mixed] { background: var(--accent); border-color: var(--accent); }
+.check[aria-checked=true]::after {
+  content: ""; position: absolute; left: 6px; top: 2px; width: 5px; height: 10px;
+  border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg);
+}
+.check[aria-checked=mixed]::after { content: ""; position: absolute; left: 4px; right: 4px; top: 8px; height: 2px; background: #fff; border-radius: 2px; }
+.check:active { transform: scale(.92); }
+.job.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--card)); }
+#lib-rows .lib-row.selected { background: color-mix(in srgb, var(--accent) 10%, var(--card)); }
+.tile > .check { position: absolute; top: 8px; left: 8px; z-index: 2; background: rgba(0,0,0,.35); border-color: rgba(255,255,255,.8); }
+.tile > .check[aria-checked=true] { background: var(--accent); border-color: #fff; }
+.tile.selected { box-shadow: 0 0 0 3px var(--accent); transform: scale(.96); }
+.tile.selected .t-art::after { content: ""; position: absolute; inset: 0; background: rgba(124,92,255,.25); }
+.job.no-source .act-source, .job[data-source=local] .act-source { display: none; }
+
+.selbar {
+  position: fixed; left: 16px; right: 16px; margin: 0 auto; width: fit-content; bottom: 96px; z-index: 28;
+  display: flex; align-items: center; gap: 6px; padding: 6px 6px 6px 16px; max-width: calc(100vw - 32px);
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: 14px;
+  box-shadow: 0 18px 50px -12px rgba(0,0,0,.6); animation: enter .2s ease-out; flex-wrap: wrap;
+}
+body:has(#player.hidden) .selbar { bottom: 24px; }
+#sel-count { font-weight: 700; margin-right: 6px; white-space: nowrap; }
+.selbar .link { font-size: 13px; }
+.sel-sep { width: 1px; height: 22px; background: var(--line); margin: 0 4px; }
+#sel-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+.sel-act { height: 34px; padding: 0 12px; font-size: 13px; font-weight: 600; }
+.sel-act:hover { background: var(--card-hover); }
+.sel-act svg { width: 16px; height: 16px; }
+.sel-act.danger:hover, .ctx .danger:hover { color: var(--err); }
+
+.ctx {
+  position: fixed; z-index: 45; min-width: 220px; padding: 5px;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 18px 50px -12px rgba(0,0,0,.6);
+}
+.ctx button { display: flex; width: 100%; height: 34px; padding: 0 10px; border-radius: 8px; font-size: 13px; }
+.ctx button:hover { background: var(--card-hover); }
+.ctx button svg { width: 16px; height: 16px; color: var(--muted); }
+.ctx hr { border: 0; border-top: 1px solid var(--line); margin: 4px 6px; }

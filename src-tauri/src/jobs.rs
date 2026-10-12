@@ -549,6 +549,11 @@ async fn run<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, cancel: Arc<Notify>
         bpm_detail: detail,
         key: if write_key { key.clone() } else { None },
         cover,
+        source_url: if is_local {
+            None
+        } else {
+            job.source_key.as_deref().and_then(crate::history::key_url).or_else(|| Some(job.url.clone()).filter(|u| u.starts_with("http")))
+        },
     };
     let f = file.clone();
     tokio::task::spawn_blocking(move || tags::write(&f, &data)).await??;
@@ -861,7 +866,7 @@ pub fn set_bpm<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, bpm: f64) -> Resu
     result.verdict = Verdict::Manual;
     tags::write(
         &path,
-        &TagData { title: None, artist: None, album: None, genre: None, bpm: Some(bpm), bpm_detail: None, key: None, cover: None },
+        &TagData { title: None, artist: None, album: None, genre: None, bpm: Some(bpm), bpm_detail: None, key: None, cover: None, source_url: None },
     )?;
     update(app, id, |j| {
         j.bpm = Some(result);
@@ -877,7 +882,7 @@ pub fn apply_bpm<R: tauri::Runtime>(app: &AppHandle<R>, id: u64) -> Result<Job> 
     let bpm = job.bpm.as_ref().map(|r| r.bpm).ok_or_else(|| anyhow!("Pas de BPM analysé"))?;
     tags::write(
         &path,
-        &TagData { title: None, artist: None, album: None, genre: None, bpm: Some(bpm), bpm_detail: None, key: None, cover: None },
+        &TagData { title: None, artist: None, album: None, genre: None, bpm: Some(bpm), bpm_detail: None, key: None, cover: None, source_url: None },
     )?;
     update(app, id, |j| j.existing_bpm = None).ok_or_else(|| anyhow!("annulé"))
 }

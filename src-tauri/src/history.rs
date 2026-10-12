@@ -37,6 +37,29 @@ pub fn source_key(source: Source, key: &str) -> Option<String> {
     Some(format!("{src}:{key}"))
 }
 
+/// Page web correspondant à une clé d'historique, quand on sait la reconstruire.
+pub fn key_url(key: &str) -> Option<String> {
+    let (src, id) = key.split_once(':')?;
+    if id.starts_with("http") {
+        return Some(id.to_string());
+    }
+    match src {
+        "youtube" => Some(format!("https://www.youtube.com/watch?v={id}")),
+        "spotify" => id.strip_prefix("spotify:track:").map(|t| format!("https://open.spotify.com/track/{t}")),
+        _ => None,
+    }
+}
+
+/// Oublie les fichiers supprimés, pour pouvoir les retélécharger.
+pub fn forget_paths<R: tauri::Runtime>(app: &AppHandle<R>, paths: &[String]) {
+    let h = app.state::<History>();
+    let mut map = h.0.lock().unwrap();
+    map.retain(|_, p| !paths.contains(p));
+    if let (Some(f), Ok(json)) = (file(app), serde_json::to_string(&*map)) {
+        let _ = std::fs::write(f, json);
+    }
+}
+
 pub fn record<R: tauri::Runtime>(app: &AppHandle<R>, key: &str, path: &str) {
     let h = app.state::<History>();
     let mut map = h.0.lock().unwrap();
@@ -76,7 +99,7 @@ pub fn split_new<R: tauri::Runtime>(
             .collect()
     };
     let roots = vec![("TrackFetcher".to_string(), PathBuf::from(output_dir))];
-    let on_disk: HashSet<String> = library::scan(&roots)
+    let on_disk: HashSet<String> = library::scan(&roots, &Default::default())
         .iter()
         .filter_map(|t| identity(t.artist.as_deref(), Some(&t.title)))
         .collect();
@@ -108,5 +131,9 @@ mod tests {
             identity(Some("daft punk"), Some("One More Time"))
         );
         assert_eq!(source_key(Source::Youtube, "abc").as_deref(), Some("youtube:abc"));
+        assert_eq!(key_url("youtube:abc").as_deref(), Some("https://www.youtube.com/watch?v=abc"));
+        assert_eq!(key_url("spotify:spotify:track:42").as_deref(), Some("https://open.spotify.com/track/42"));
+        assert_eq!(key_url("soundcloud:https://soundcloud.com/a/b").as_deref(), Some("https://soundcloud.com/a/b"));
+        assert_eq!(key_url("soundcloud:12345"), None);
     }
 }

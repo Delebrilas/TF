@@ -109,6 +109,8 @@ function showView(v) {
   for (const b of $("#tabs").children) b.classList.toggle("on", b.dataset.view === v);
   for (const s of document.querySelectorAll(".view")) s.classList.toggle("hidden", s.id !== "view-" + v);
   if (v === "library") loadLibrary();
+  hideCtx();
+  renderSelBar();
 }
 $("#tabs").onclick = (e) => {
   const b = e.target.closest("button");
@@ -149,10 +151,18 @@ function render(job) {
       if (j.path) T.opener.revealItemInDir(j.path);
     };
     el.querySelector(".cover-play").onclick = () => playFromQueue(job.id);
+    el.querySelector(".check").onclick = (e) => toggleSel("queue", job.id, e);
+    el.querySelector(".act-source").onclick = () => {
+      const u = jobSourceUrl(jobs.get(job.id));
+      if (u) openSource(u);
+    };
     el.querySelector(".bpm").onclick = () => editBpm(job.id);
     $("#queue").prepend(el);
   }
   el.dataset.status = job.status;
+  el.classList.toggle("no-source", !jobSourceUrl(job));
+  el.classList.toggle("selected", sel.queue.has(job.id));
+  el.querySelector(".check").setAttribute("aria-checked", sel.queue.has(job.id));
   el.dataset.source = job.source;
   el.classList.toggle("priority", !!job.priority);
   el.querySelector(".act-priority").title = job.priority ? "Retirer la priorité" : "Passer en priorité";
@@ -196,6 +206,7 @@ function render(job) {
     };
   }
   if (job.status === "done") libraryChanged();
+  if (sel.queue.size) renderSelBar();
   sortQueue();
   updateCount();
   markPlaying();
@@ -301,6 +312,10 @@ function updateCount() {
   const all = [...jobs.values()];
   $("#btn-clear").classList.toggle("hidden", !all.some((j) => j.status === "done"));
   $("#btn-clear-all").classList.toggle("hidden", all.length < 2);
+  $("#btn-sel-queue").classList.toggle("hidden", all.length < 2);
+  const failed = all.filter((j) => j.status === "error").length;
+  $("#btn-retry-all").classList.toggle("hidden", failed < 1);
+  $("#btn-retry-all").textContent = failed > 1 ? `Réessayer les ${failed} échecs` : "Réessayer l'échec";
   const active = all.filter((j) => !["done", "error"].includes(j.status)).length;
   $("#badge-queue").textContent = active || "";
 }
@@ -481,6 +496,7 @@ $("#btn-files").onclick = async () => {
 };
 $("#btn-folder").onclick = () => settings && T.opener.openPath(settings.output_dir);
 $("#btn-clear").onclick = () => invoke("clear_finished");
+$("#btn-retry-all").onclick = () => invoke("retry_failed");
 $("#btn-clear-all").onclick = async () => {
   const n = jobs.size;
   if (!n) return;
@@ -676,7 +692,8 @@ function renderLibrary() {
   if (libMode === "grid") {
     $("#lib-rows").replaceChildren();
     renderMosaic(list);
-    return markPlaying();
+    markPlaying();
+    return refreshSel();
   }
   $("#lib-grid").replaceChildren();
   $("#lib-dir").textContent = libDesc ? "↑" : "↓";
@@ -686,15 +703,15 @@ function renderLibrary() {
     const row = document.createElement("div");
     row.className = "lib-row";
     row.dataset.path = t.path;
-    row.innerHTML = `
+    row.innerHTML = `<span class="l-check"></span>
       <div class="l-idx"><svg><use href="#i-note"/></svg><img alt=""/><span class="cover-play"><svg><use href="#i-play"/></svg></span></div>
       <div class="l-main"><div class="l-title"></div><div class="l-artist"></div></div>
       <div class="l-album"></div><div class="l-genre"></div><div class="l-key"></div><div class="l-bpm"></div>`;
     if (t.key) row.querySelector(".l-key").appendChild(keyPill(t.key));
-    row.oncontextmenu = (e) => {
-      e.preventDefault();
-      showSuggestions(libTrack(t));
-    };
+    row.querySelector(".l-check").replaceWith(makeCheck("library", t.path));
+    row.classList.toggle("selected", sel.library.has(t.path));
+    row.querySelector(".check").setAttribute("aria-checked", sel.library.has(t.path));
+    row.oncontextmenu = (e) => trackMenu(e, t, list, i);
     row.querySelector(".l-title").textContent = t.title;
     row.querySelector(".l-artist").textContent = t.artist || "";
     row.querySelector(".l-album").textContent = t.album || "";
@@ -704,6 +721,10 @@ function renderLibrary() {
     idx.dataset.path = t.path;
     if (t.has_cover) coverObserver.observe(idx);
     row.ondblclick = () => playList(list.map(libTrack), i);
+    row.onclick = (e) => {
+      if (e.target.closest(".cover-play, .check")) return;
+      if (sel.library.size || e.ctrlKey || e.metaKey || e.shiftKey) toggleSel("library", t.path, e);
+    };
     hoverPreview(idx, t);
     row.querySelector(".cover-play").onclick = () => {
       if (current()?.path === t.path) togglePlay();
@@ -713,6 +734,7 @@ function renderLibrary() {
   });
   rows.appendChild(frag);
   markPlaying();
+  refreshSel();
 }
 $("#lib-search").addEventListener("input", renderLibrary);
 $("#lib-sort").addEventListener("change", () => {
@@ -1526,11 +1548,16 @@ function renderMosaic(list) {
     if (t.bpm) tags.append(`${Math.round(t.bpm)} BPM`);
     if (t.key) tags.append(" ", keyPill(t.key));
     if (t.has_cover) coverObserver.observe(el);
-    el.onclick = () => (current()?.path === t.path ? togglePlay() : playList(list.map(libTrack), i));
-    el.oncontextmenu = (e) => {
-      e.preventDefault();
-      showSuggestions(libTrack(t));
+    el.onclick = (e) => {
+      // En mode sélection (ou Ctrl/Maj + clic), un clic coche au lieu de lire.
+      if (sel.library.size || e.ctrlKey || e.metaKey || e.shiftKey) return toggleSel("library", t.path, e);
+      current()?.path === t.path ? togglePlay() : playList(list.map(libTrack), i);
     };
+    el.oncontextmenu = (e) => trackMenu(e, t, list, i);
+    const ck = makeCheck("library", t.path);
+    ck.setAttribute("aria-checked", sel.library.has(t.path));
+    el.classList.toggle("selected", sel.library.has(t.path));
+    el.appendChild(ck);
     hoverPreview(el, t);
     frag.appendChild(el);
   });
@@ -1805,6 +1832,260 @@ function pulseFrame() {
   document.documentElement.style.setProperty("--beat", (1 + pulseLevel * 0.06).toFixed(3));
 }
 
+// ---------- Sélection multiple (cases à cocher) ----------
+
+const sel = { queue: new Set(), library: new Set() };
+const selAnchor = { queue: null, library: null };
+const selScope = () => (view === "queue" || view === "library" ? view : null);
+
+/// Ordre affiché, pour la sélection au clic + Maj.
+function orderedKeys(scope) {
+  if (scope === "queue") return [...document.querySelectorAll("#queue .job")].map((el) => Number(el.id.slice(4)));
+  return filteredLibrary().map((t) => t.path);
+}
+
+function toggleSel(scope, key, e) {
+  const set = sel[scope];
+  const anchor = selAnchor[scope];
+  if (e?.shiftKey && anchor != null) {
+    const keys = orderedKeys(scope);
+    const a = keys.indexOf(anchor), b = keys.indexOf(key);
+    if (a >= 0 && b >= 0) {
+      const on = !set.has(key) || set.has(anchor);
+      for (const k of keys.slice(Math.min(a, b), Math.max(a, b) + 1)) on ? set.add(k) : set.delete(k);
+    }
+  } else if (set.has(key)) set.delete(key);
+  else set.add(key);
+  selAnchor[scope] = key;
+  refreshSel();
+}
+
+function makeCheck(scope, key) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "check";
+  b.setAttribute("role", "checkbox");
+  b.title = "Sélectionner";
+  b.onclick = (e) => {
+    e.stopPropagation();
+    toggleSel(scope, key, e);
+  };
+  b.ondblclick = (e) => e.stopPropagation();
+  return b;
+}
+
+function selectAll(scope, invert = false) {
+  const keys = orderedKeys(scope);
+  const set = sel[scope];
+  if (invert) {
+    for (const k of keys) set.has(k) ? set.delete(k) : set.add(k);
+  } else keys.forEach((k) => set.add(k));
+  refreshSel();
+}
+
+function clearSel(scope = selScope()) {
+  if (!scope) return;
+  sel[scope].clear();
+  selAnchor[scope] = null;
+  refreshSel();
+}
+
+function refreshSel() {
+  // Oublie ce qui a disparu.
+  for (const id of sel.queue) if (!jobs.has(id)) sel.queue.delete(id);
+  if (libLoaded) {
+    const paths = new Set(library.map((t) => t.path));
+    for (const p of sel.library) if (!paths.has(p)) sel.library.delete(p);
+  }
+  document.querySelectorAll("#queue .job").forEach((el) => {
+    const on = sel.queue.has(Number(el.id.slice(4)));
+    el.classList.toggle("selected", on);
+    el.querySelector(".check").setAttribute("aria-checked", on);
+  });
+  document.querySelectorAll("#lib-rows .lib-row, #lib-grid .tile").forEach((el) => {
+    const on = sel.library.has(el.dataset.path);
+    el.classList.toggle("selected", on);
+    el.querySelector(".check")?.setAttribute("aria-checked", on);
+  });
+  const shown = libLoaded ? filteredLibrary().length : 0;
+  const nLib = sel.library.size;
+  $("#lib-check-all").setAttribute("aria-checked", nLib && nLib >= shown ? "true" : nLib ? "mixed" : "false");
+  $("#queue").classList.toggle("selecting", sel.queue.size > 0);
+  $("#lib-grid").classList.toggle("selecting", nLib > 0);
+  renderSelBar();
+}
+
+function selectedJobs() {
+  return [...sel.queue].map((id) => jobs.get(id)).filter(Boolean);
+}
+function selectedTracks() {
+  return library.filter((t) => sel.library.has(t.path));
+}
+
+function selAction(label, icon, fn, cls = "") {
+  const b = document.createElement("button");
+  b.className = "sel-act " + cls;
+  b.innerHTML = `<svg><use href="#${icon}"/></svg><span></span>`;
+  b.querySelector("span").textContent = label;
+  b.onclick = fn;
+  return b;
+}
+
+function renderSelBar() {
+  const scope = selScope();
+  const n = scope ? sel[scope].size : 0;
+  $("#selbar").classList.toggle("hidden", !n);
+  if (!n) return;
+  $("#sel-count").textContent = `${n} sélectionné${n > 1 ? "s" : ""}`;
+  const box = $("#sel-actions");
+  box.replaceChildren();
+  if (scope === "queue") {
+    const list = selectedJobs();
+    const failed = list.filter((j) => j.status === "error");
+    const done = list.filter((j) => j.status === "done" && j.path);
+    if (failed.length) box.append(selAction(`Réessayer (${failed.length})`, "i-retry", () => failed.forEach((j) => invoke("retry_job", { id: j.id }))));
+    if (done.length === 1) box.append(selAction("Dossier", "i-folder", () => T.opener.revealItemInDir(done[0].path)));
+    const srcs = list.map(jobSourceUrl).filter(Boolean);
+    if (srcs.length && srcs.length <= 5) box.append(selAction("Source", "i-external", () => srcs.forEach(openSource)));
+    box.append(selAction("Retirer de la file", "i-x", async () => {
+      await invoke("remove_jobs", { ids: list.map((j) => j.id) });
+      clearSel("queue");
+    }));
+    if (done.length) box.append(selAction(`Corbeille (${done.length})`, "i-trash", () => trashPaths(done.map((j) => j.path)), "danger"));
+  } else {
+    const list = selectedTracks();
+    box.append(selAction("Lire", "i-play", () => playList(list.map(libTrack), 0)));
+    if (list.length === 1) box.append(selAction("Dossier", "i-folder", () => T.opener.revealItemInDir(list[0].path)));
+    const srcs = list.map((t) => t.source).filter(Boolean);
+    if (srcs.length && srcs.length <= 5) box.append(selAction("Source", "i-external", () => srcs.forEach(openSource)));
+    box.append(selAction("Corbeille", "i-trash", () => trashPaths(list.map((t) => t.path)), "danger"));
+  }
+}
+
+$("#sel-all").onclick = () => selectAll(selScope());
+$("#btn-sel-queue").onclick = () => selectAll("queue");
+$("#lib-select").onclick = () => (sel.library.size ? clearSel("library") : selectAll("library"));
+$("#sel-invert").onclick = () => selectAll(selScope(), true);
+$("#sel-close").onclick = () => clearSel();
+$("#lib-check-all").onclick = () => (sel.library.size ? clearSel("library") : selectAll("library"));
+document.addEventListener("keydown", (e) => {
+  if (e.target.closest("input, textarea, select")) return;
+  const scope = selScope();
+  if (!scope) return;
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+    e.preventDefault();
+    selectAll(scope);
+  } else if (e.key === "Escape" && sel[scope].size) clearSel(scope);
+  else if (e.key === "Delete" && sel[scope].size) {
+    if (scope === "library") trashPaths(selectedTracks().map((t) => t.path));
+    else invoke("remove_jobs", { ids: [...sel.queue] }).then(() => clearSel("queue"));
+  }
+});
+
+// ---------- Source d'origine, dossier, corbeille ----------
+
+function keyUrl(k) {
+  if (!k) return null;
+  const i = k.indexOf(":");
+  if (i < 0) return null;
+  const src = k.slice(0, i), id = k.slice(i + 1);
+  if (id.startsWith("http")) return id;
+  if (src === "youtube") return "https://www.youtube.com/watch?v=" + id;
+  if (src === "spotify" && id.startsWith("spotify:track:")) return "https://open.spotify.com/track/" + id.slice(14);
+  return null;
+}
+const jobSourceUrl = (j) => (j.source === "local" ? null : keyUrl(j.source_key) || (/^https?:/.test(j.url) ? j.url : null));
+function openSource(url) {
+  T.opener.openUrl(url).catch((e) => toast(String(e), true));
+}
+
+async function trashPaths(paths) {
+  if (!paths.length) return;
+  const n = paths.length;
+  const ok = await T.dialog.ask(
+    `Mettre ${n === 1 ? "ce morceau" : `ces ${n} morceaux`} à la corbeille ?\nTu pourras les récupérer depuis la corbeille de Windows.`,
+    { title: "Supprimer du disque", kind: "warning", okLabel: "Mettre à la corbeille", cancelLabel: "Annuler" }
+  );
+  if (!ok) return;
+  if (current() && paths.includes(current().path)) audio.pause();
+  let gone;
+  try {
+    gone = new Set(await invoke("trash_files", { paths }));
+    const k = gone.size;
+    toast(`${k} morceau${k > 1 ? "x" : ""} mis à la corbeille` + (k < n ? `, ${n - k} impossible${n - k > 1 ? "s" : ""}` : ""), k < n);
+  } catch (e) {
+    return toast(String(e), true);
+  }
+  const ids = [...jobs.values()].filter((j) => j.path && gone.has(j.path)).map((j) => j.id);
+  if (ids.length) await invoke("remove_jobs", { ids });
+  library = library.filter((t) => !gone.has(t.path));
+  for (const p of gone) sel.library.delete(p);
+  if (libLoaded) {
+    renderFolders();
+    renderLibrary();
+  }
+  refreshSel();
+}
+
+// ---------- Menu clic droit ----------
+
+function showCtx(e, items) {
+  e.preventDefault();
+  const m = $("#ctx");
+  m.replaceChildren();
+  for (const it of items) {
+    if (!it) continue;
+    if (it === "-") {
+      m.appendChild(document.createElement("hr"));
+      continue;
+    }
+    const b = document.createElement("button");
+    b.className = it.danger ? "danger" : "";
+    b.innerHTML = `<svg><use href="#${it.icon}"/></svg><span></span>`;
+    b.querySelector("span").textContent = it.label;
+    b.onclick = () => {
+      hideCtx();
+      it.run();
+    };
+    m.appendChild(b);
+  }
+  m.classList.remove("hidden");
+  const r = m.getBoundingClientRect();
+  m.style.left = Math.min(e.clientX, innerWidth - r.width - 8) + "px";
+  m.style.top = Math.min(e.clientY, innerHeight - r.height - 8) + "px";
+}
+const hideCtx = () => $("#ctx").classList.add("hidden");
+// Pas de menu natif du navigateur (Précédent, Actualiser…) hors des champs de saisie.
+document.addEventListener("contextmenu", (e) => {
+  if (!e.target.closest("input, textarea")) e.preventDefault();
+});
+document.addEventListener("click", hideCtx);
+document.addEventListener("keydown", (e) => e.key === "Escape" && hideCtx());
+window.addEventListener("blur", hideCtx);
+$("main").addEventListener("scroll", hideCtx, true);
+
+function trackMenu(e, t, list, i) {
+  // Clic droit sur un morceau sélectionné : le menu agit sur toute la sélection.
+  if (sel.library.has(t.path) && sel.library.size > 1) {
+    const many = selectedTracks();
+    return showCtx(e, [
+      { label: `Lire les ${many.length} morceaux`, icon: "i-play", run: () => playList(many.map(libTrack), 0) },
+      "-",
+      { label: `Mettre ${many.length} morceaux à la corbeille`, icon: "i-trash", danger: true, run: () => trashPaths(many.map((x) => x.path)) },
+    ]);
+  }
+  showCtx(e, [
+    { label: "Lire", icon: "i-play", run: () => playList(list.map(libTrack), i) },
+    { label: "Morceaux à enchaîner", icon: "i-mix", run: () => showSuggestions(libTrack(t)) },
+    "-",
+    { label: "Ouvrir le dossier", icon: "i-folder", run: () => T.opener.revealItemInDir(t.path) },
+    t.source && { label: "Ouvrir la page d'origine", icon: "i-external", run: () => openSource(t.source) },
+    { label: sel.library.has(t.path) ? "Désélectionner" : "Sélectionner", icon: "i-check", run: () => toggleSel("library", t.path) },
+    "-",
+    { label: "Mettre à la corbeille", icon: "i-trash", danger: true, run: () => trashPaths([t.path]) },
+  ]);
+}
+
 // ---------- Démarrage ----------
 
 (async () => {
@@ -1822,6 +2103,7 @@ function pulseFrame() {
     jobs.delete(e.payload);
     document.getElementById("job-" + e.payload)?.remove();
     updateCount();
+    if (sel.queue.delete(e.payload)) refreshSel();
   });
   await listen("watched", (e) => renderWatched(e.payload));
   await listen("clipboard-link", (e) => showClipboard(e.payload));

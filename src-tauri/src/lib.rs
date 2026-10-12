@@ -199,9 +199,61 @@ fn clear_all(app: AppHandle, st: State<AppState>) -> usize {
 }
 
 #[tauri::command]
-async fn library_scan(st: State<'_, AppState>) -> CmdResult<Vec<library::LibTrack>> {
+async fn library_scan(st: State<'_, AppState>, hist: State<'_, history::History>) -> CmdResult<Vec<library::LibTrack>> {
     let roots = library_roots(&st.settings.lock().unwrap());
-    tauri::async_runtime::spawn_blocking(move || library::scan(&roots)).await.map_err(err)
+    let sources = hist
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|(k, p)| Some((p.clone(), history::key_url(k)?)))
+        .collect();
+    tauri::async_runtime::spawn_blocking(move || library::scan(&roots, &sources)).await.map_err(err)
+}
+
+/// Envoie des MP3 à la corbeille (récupérables depuis Windows).
+#[tauri::command]
+async fn trash_files(app: AppHandle, paths: Vec<String>) -> CmdResult<Vec<String>> {
+    let mp3: Vec<String> = paths
+        .into_iter()
+        .filter(|p| std::path::Path::new(p).extension().is_some_and(|e| e.eq_ignore_ascii_case("mp3")))
+        .collect();
+    let list = mp3.clone();
+    let done = tauri::async_runtime::spawn_blocking(move || {
+        list.iter()
+            .filter(|p| trash::delete(p).is_ok() && !std::path::Path::new(p).exists())
+            .cloned()
+            .collect::<Vec<_>>()
+    })
+    .await
+    .map_err(err)?;
+    history::forget_paths(&app, &done);
+    if done.is_empty() && !mp3.is_empty() {
+        return Err("Impossible de mettre ces fichiers à la corbeille".into());
+    }
+    Ok(done)
+}
+
+/// Relance toutes les pistes en échec.
+#[tauri::command]
+fn retry_failed(app: AppHandle, st: State<AppState>) -> usize {
+    let ids: Vec<u64> = st.jobs.lock().unwrap().iter().filter(|j| j.status == Status::Error).map(|j| j.id).collect();
+    for &id in &ids {
+        jobs::retry(&app, id);
+    }
+    ids.len()
+}
+
+/// Retire plusieurs pistes de la file (annule celles en cours).
+#[tauri::command]
+fn remove_jobs(app: AppHandle, st: State<AppState>, ids: Vec<u64>) {
+    st.jobs.lock().unwrap().retain(|j| !ids.contains(&j.id));
+    for &id in &ids {
+        jobs::cancel(&app, id);
+        let _ = app.emit("job-removed", id);
+    }
+    jobs::persist(&app);
+    jobs::pump(&app);
 }
 
 fn library_roots(s: &settings::Settings) -> Vec<(String, std::path::PathBuf)> {
@@ -329,6 +381,9 @@ pub fn run() {
             remove_job,
             clear_finished,
             clear_all,
+            trash_files,
+            retry_failed,
+            remove_jobs,
             retry_job,
             library_scan,
             cover_art,

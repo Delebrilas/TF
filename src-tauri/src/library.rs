@@ -19,6 +19,8 @@ pub struct LibTrack {
     pub folder: String,
     /// Date de modification (secondes Unix), pour « Ajouts récents ».
     pub added: u64,
+    /// Page d'origine (tag WOAS ou historique des téléchargements).
+    pub source: Option<String>,
 }
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>, depth: usize) {
@@ -39,7 +41,7 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>, depth: usize) {
 
 /// Parcourt chaque racine. Le dossier de sortie s'appelle « TrackFetcher »,
 /// les autres prennent leur propre nom.
-pub fn scan(roots: &[(String, PathBuf)]) -> Vec<LibTrack> {
+pub fn scan(roots: &[(String, PathBuf)], sources: &std::collections::HashMap<String, String>) -> Vec<LibTrack> {
     let mut out = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for (label, root) in roots {
@@ -55,7 +57,11 @@ pub fn scan(roots: &[(String, PathBuf)]) -> Vec<LibTrack> {
                 .map(|r| r.components().map(|c| c.as_os_str().to_string_lossy().to_string()).collect::<Vec<_>>())
                 .unwrap_or_default();
             let folder = std::iter::once(label.clone()).chain(rel).collect::<Vec<_>>().join("/");
-            out.push(read_track(&p, folder));
+            let mut t = read_track(&p, folder);
+            if t.source.is_none() {
+                t.source = sources.get(&t.path).cloned();
+            }
+            out.push(t);
         }
     }
     out
@@ -85,6 +91,7 @@ fn read_track(p: &Path, folder: String) -> LibTrack {
         has_cover: t.is_some_and(|t| t.pictures().next().is_some()),
         path: p.display().to_string(),
         added,
+        source: t.and_then(crate::tags::source_of),
     }
 }
 
