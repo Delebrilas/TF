@@ -190,25 +190,27 @@
             </div>
             <div class="mix-plan muted small" id="mix-plan"></div>
             <button class="link" id="mix-pair" disabled><svg><use href="#i-star"/></svg> Garder cette paire</button>
-            <details class="mix-opts" id="mix-opts" open>
-              <summary>Options de transition</summary>
-              <div class="opt"><button type="button" class="switch" role="switch" data-opt="autoPoint"></button><span><b>Point de transition auto</b><small>Mixe tout seul à la sortie conseillée du morceau.</small></span></div>
-              <div class="opt"><button type="button" class="switch" role="switch" data-opt="sync"></button><span><b>Battements alignés</b><small>Le morceau suivant démarre calé sur la mesure.</small></span></div>
-              <div class="opt"><button type="button" class="switch" role="switch" data-opt="ramp"></button><span><b>Rampe de tempo</b><small>Le BPM glisse du morceau A au B pendant le fondu.</small></span></div>
-              <div class="opt"><button type="button" class="switch" role="switch" data-opt="bassSwap"></button><span><b>Échange des basses</b><small>Coupe les basses du suivant, puis les échange au milieu.</small></span></div>
-              <div class="opt"><button type="button" class="switch" role="switch" data-opt="keylock"></button><span><b>Keylock</b><small>Garde la tonalité quand le tempo change.</small></span></div>
-              <div class="opt"><button type="button" class="switch" role="switch" data-opt="autoNext"></button><span><b>Enchaîner tout seul</b><small>Charge la meilleure suggestion après chaque transition.</small></span></div>
-              <div class="opt-row"><span>Fondu</span><div class="segmented" data-opt="fade"><button data-v="power">Doux</button><button data-v="linear">Linéaire</button><button data-v="cut">Coupure</button></div></div>
-              <div class="opt-row"><span>Durée</span><div class="segmented" data-opt="bars"><button data-v="auto">Auto</button><button data-v="4">4</button><button data-v="8">8</button><button data-v="16">16</button><button data-v="32">32</button></div><small class="muted">mesures</small></div>
-            </details>
           </div>
           <div class="deck" data-deck="B"></div>
         </div>
+        <details class="mix-opts" id="mix-opts" open>
+          <summary>Options de transition</summary>
+          <div class="opts-grid">
+          <div class="opt"><button type="button" class="switch" role="switch" data-opt="autoPoint"></button><span><b>Point de transition auto</b><small>Mixe tout seul à la sortie conseillée du morceau.</small></span></div>
+          <div class="opt"><button type="button" class="switch" role="switch" data-opt="sync"></button><span><b>Battements alignés</b><small>Le morceau suivant démarre calé sur la mesure.</small></span></div>
+          <div class="opt"><button type="button" class="switch" role="switch" data-opt="ramp"></button><span><b>Rampe de tempo</b><small>Le BPM glisse du morceau A au B pendant le fondu.</small></span></div>
+          <div class="opt"><button type="button" class="switch" role="switch" data-opt="bassSwap"></button><span><b>Échange des basses</b><small>Coupe les basses du suivant, puis les échange au milieu.</small></span></div>
+          <div class="opt"><button type="button" class="switch" role="switch" data-opt="keylock"></button><span><b>Keylock</b><small>Garde la tonalité quand le tempo change.</small></span></div>
+          <div class="opt"><button type="button" class="switch" role="switch" data-opt="autoNext"></button><span><b>Enchaîner tout seul</b><small>Charge la meilleure suggestion après chaque transition.</small></span></div>
+          <div class="opt-row"><span>Fondu</span><div class="segmented" data-opt="fade"><button data-v="power">Doux</button><button data-v="linear">Linéaire</button><button data-v="cut">Coupure</button></div></div>
+          <div class="opt-row"><span>Durée</span><div class="segmented" data-opt="bars"><button data-v="auto">Auto</button><button data-v="4">4</button><button data-v="8">8</button><button data-v="16">16</button><button data-v="32">32</button></div><small class="muted">mesures</small></div>
+          </div>
+        </details>
         <div class="dj-browser">
           <div class="segmented" id="dj-tabs">
-            <button data-v="next" class="on">À enchaîner</button>
+            <button data-v="next">À enchaîner</button>
             <button data-v="pairs">Paires favorites</button>
-            <button data-v="all">Bibliothèque</button>
+            <button data-v="all" class="on">Bibliothèque</button>
           </div>
           <label class="search"><svg><use href="#i-search"/></svg><input id="dj-search" type="text" placeholder="Titre, artiste, note, BPM…" /></label>
           <button class="link" id="dj-analyze" title="Repère les intros et outros de toute la bibliothèque">Analyser les intros</button>

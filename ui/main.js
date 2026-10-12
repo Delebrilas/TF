@@ -1054,6 +1054,7 @@ document.addEventListener("keydown", (e) => {
   if (e.target.closest("input, textarea, select")) return;
   if (e.code === "Space") {
     e.preventDefault();
+    if (view === "dj") return; // Espace = mixer dans l'onglet DJ
     togglePlay();
   } else if (e.key === "ArrowRight" && e.altKey) step(1);
   else if (e.key === "ArrowLeft" && e.altKey) step(-1);

@@ -629,7 +629,7 @@ function deckTemplate(id) {
       <label><span>Basses</span><input type="range" class="d-eq-l" min="-26" max="6" value="0" title="Double-clic : 0" /></label>
     </div>
     <details class="d-note"><summary><svg><use href="#i-pen"/></svg> Note</summary><textarea rows="2" placeholder="Ex. : drop à 1:32, ne pas mixer avec du vocal"></textarea></details>
-    <div class="d-empty">Glisse un morceau ici<br><span class="muted small">ou choisis-en un plus bas</span></div>`;
+    <div class="d-empty"><div>Glisse un morceau ici<br><span class="muted small">ou choisis-en un plus bas</span></div></div>`;
   const d = decks[id];
   el.querySelector(".d-play").onclick = () => (d.playing ? pause(d) : play(d));
   el.querySelector(".d-cue").onclick = () => seek(d, d.inPt);
@@ -760,7 +760,7 @@ function renderMixer() {
   $("#mix-pair").disabled = !(a.track && b.track);
   const arrow = `${a.id} → ${b.id}`;
   go.querySelector("span").textContent = mix && !mix.auto ? "Annuler" : `Mixer ${arrow}`;
-  go.title = mix && !mix.auto ? "Annuler la transition" : "Lance la transition à la prochaine mesure";
+  go.title = mix && !mix.auto ? "Annuler la transition (Espace)" : "Lance la transition à la prochaine mesure (Espace)";
   const plan = $("#mix-plan");
   if (!ok) {
     plan.textContent = !a.track || !b.track ? "Charge un morceau sur chaque platine." : "Analyse en cours…";
@@ -955,7 +955,7 @@ function frame() {
 // ---------- Suggestions, paires, bibliothèque ----------
 
 let pairs = [];
-let browserTab = "next";
+let browserTab = "all";
 
 function nextFor(ref) {
   const fav = pairs.filter((p) => p.a === ref.path).map((p) => library.find((t) => t.path === p.b)).filter(Boolean);
