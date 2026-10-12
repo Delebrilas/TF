@@ -8,6 +8,8 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <div id="ambient"><i></i><i></i><i></i></div>
+  <div id="pulse"></div>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
     <symbol id="i-spotify" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm4.6 14.4a.62.62 0 0 1-.86.2c-2.35-1.43-5.3-1.76-8.79-.96a.62.62 0 1 1-.28-1.21c3.81-.87 7.08-.5 9.72 1.11.3.18.39.57.21.86Zm1.22-2.72a.78.78 0 0 1-1.07.26c-2.690-1.650-6.8-2.130-9.98-1.170a.78.78 0 1 1-.45-1.49c3.64-1.1 8.16-.57 11.24 1.33.37.22.48.7.26 1.07Zm.1-2.84C14.7 8.93 9.38 8.75 6.3 9.69a.94.94 0 1 1-.54-1.8c3.53-1.07 9.4-.86 13.12 1.34a.94.94 0 0 1-.96 1.61Z"/></symbol>
     <symbol id="i-youtube" viewBox="0 0 24 24"><path fill="currentColor" d="M23 7.2a3 3 0 0 0-2.1-2.1C19 4.6 12 4.6 12 4.6s-7 0-8.9.5A3 3 0 0 0 1 7.2 31 31 0 0 0 .5 12a31 31 0 0 0 .5 4.8 3 3 0 0 0 2.1 2.1c1.9.5 8.9.5 8.9.5s7 0 8.9-.5a3 3 0 0 0 2.1-2.1c.4-1.6.5-3.2.5-4.8s-.1-3.2-.5-4.8ZM9.8 15.1V8.9l5.8 3.1-5.8 3.1Z"/></symbol>
@@ -35,6 +37,9 @@
     <symbol id="i-moon" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/></symbol>
     <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
     <symbol id="i-mix" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><path stroke="currentColor" stroke-width="2" d="M12 3v4.5M12 16.5V21M3 12h4.5M16.5 12H21"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7.5" height="7.5" rx="1.6" fill="currentColor"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.6" fill="currentColor"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.6" fill="currentColor"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.6" fill="currentColor"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M4 6h16M4 12h16M4 18h16"/></symbol>
+    <symbol id="i-merge" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M6 3v4a5 5 0 0 0 5 5h2a5 5 0 0 1 5 5v4M18 3v4a5 5 0 0 1-5 5M3 18l3 3 3-3"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M6 7v14"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="m20 20-3.5-3.5"/></symbol>
   </svg>
 
@@ -68,7 +73,7 @@
 
     <form class="omnibox" id="omnibox" autocomplete="off">
       <span class="src-icon" id="src-icon"><svg><use href="#i-link"/></svg></span>
-      <input id="url" type="text" spellcheck="false" placeholder="Colle ou glisse un lien Spotify, YouTube ou SoundCloud" />
+      <input id="url" type="text" spellcheck="false" placeholder="Colle un lien, ou tape « artiste titre » pour chercher" />
       <div class="follow-wrap hidden" id="follow-wrap">
         <button class="ghost" type="button" id="btn-follow" title="Suivre cette playlist et télécharger les nouveautés"><svg><use href="#i-eye"/></svg><span>Suivre</span></button>
         <div class="menu" id="follow-menu">
@@ -77,6 +82,7 @@
         </div>
       </div>
       <button class="primary" id="btn-add" type="submit"><svg><use href="#i-arrow"/></svg><span>Télécharger</span></button>
+      <div class="search-results hidden" id="search-results"></div>
     </form>
 
     <!-- File d'attente -->
@@ -118,6 +124,15 @@
                 <option value="genre">Genre</option>
               </select>
               <button class="icon" id="lib-dir" title="Inverser l'ordre">↓</button>
+              <div class="bpm-range" title="Filtrer par BPM">
+                <span id="bpm-label">Tous BPM</span>
+                <div class="dual" id="bpm-dual"><i></i><input type="range" id="bpm-min" min="60" max="200" value="60" /><input type="range" id="bpm-max" min="60" max="200" value="200" /></div>
+              </div>
+              <div class="segmented mini" id="lib-mode">
+                <button data-v="grid" title="Mosaïque"><svg><use href="#i-grid"/></svg></button>
+                <button data-v="list" title="Liste"><svg><use href="#i-list"/></svg></button>
+              </div>
+              <button class="icon" id="lib-artists" title="Fusionner les artistes mal orthographiés"><svg><use href="#i-merge"/></svg></button>
               <button class="primary small" id="lib-play"><svg><use href="#i-play"/></svg><span>Lire</span></button>
             </div>
           </div>
@@ -132,6 +147,7 @@
             </div>
             <div id="lib-rows"></div>
           </div>
+          <div class="mosaic hidden" id="lib-grid"></div>
           <div class="empty hidden" id="lib-empty"><p>Aucun MP3 ici pour l'instant.</p></div>
         </div>
       </div>
@@ -303,6 +319,16 @@
       </div>
 
       <div class="toggle">
+        <button type="button" class="switch" role="switch" id="s-ambient"></button>
+        <span><b>Fond animé</b><small>Le fond prend les couleurs de la pochette en cours de lecture.</small></span>
+      </div>
+
+      <div class="toggle">
+        <button type="button" class="switch" role="switch" id="s-pulse"></button>
+        <span><b>Pulsation au BPM</b><small>Le contour de la fenêtre bat au rythme du morceau.</small></span>
+      </div>
+
+      <div class="toggle">
         <button type="button" class="switch" role="switch" id="s-verify" aria-checked="false"></button>
         <span><b>Vérifier le BPM en ligne</b><small>Compare l'analyse avec Deezer, GetSongBPM et la description.</small></span>
       </div>
@@ -320,6 +346,17 @@
   </aside>
 
   <!-- Suggestions d'enchaînement -->
+  <div class="modal hidden" id="merge">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>Fusionner les artistes</h3>
+        <button class="icon" id="merge-close" title="Fermer"><svg><use href="#i-x"/></svg></button>
+      </div>
+      <p class="muted">Ces noms semblent désigner le même artiste. Choisis la bonne orthographe, elle sera écrite dans les tags.</p>
+      <div id="merge-list"></div>
+    </div>
+  </div>
+
   <aside class="suggest hidden" id="suggest">
     <div class="suggest-head">
       <div><b>À enchaîner après</b><div class="muted small" id="suggest-ref"></div></div>
