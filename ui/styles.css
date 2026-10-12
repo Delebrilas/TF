@@ -612,3 +612,4 @@ body.ambient-on .topbar { background: color-mix(in srgb, var(--bg-2) 70%, transp
 @media (prefers-reduced-motion: reduce) { #ambient i { animation: none; } }
 
 .lib-tools .search input { width: 150px; }
+button.link.danger:hover { color: var(--err); }

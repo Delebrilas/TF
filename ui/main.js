@@ -300,6 +300,7 @@ function updateCount() {
   $("#empty").classList.toggle("hidden", n > 0);
   const all = [...jobs.values()];
   $("#btn-clear").classList.toggle("hidden", !all.some((j) => j.status === "done"));
+  $("#btn-clear-all").classList.toggle("hidden", all.length < 2);
   const active = all.filter((j) => !["done", "error"].includes(j.status)).length;
   $("#badge-queue").textContent = active || "";
 }
@@ -480,6 +481,15 @@ $("#btn-files").onclick = async () => {
 };
 $("#btn-folder").onclick = () => settings && T.opener.openPath(settings.output_dir);
 $("#btn-clear").onclick = () => invoke("clear_finished");
+$("#btn-clear-all").onclick = async () => {
+  const n = jobs.size;
+  if (!n) return;
+  const active = [...jobs.values()].filter((j) => !["done", "error", "queued"].includes(j.status)).length;
+  const msg = `Retirer les ${n} morceaux de la file d'attente ?` + (active ? `\n${active} téléchargement${active > 1 ? "s" : ""} en cours ser${active > 1 ? "ont" : "a"} annulé${active > 1 ? "s" : ""}.` : "") + "\nLes fichiers déjà téléchargés sont conservés.";
+  if (!(await T.dialog.ask(msg, { title: "Vider la file d'attente", kind: "warning", okLabel: "Tout vider", cancelLabel: "Annuler" }))) return;
+  const removed = await invoke("clear_all");
+  toast(`File vidée (${removed} morceau${removed > 1 ? "x" : ""})`);
+};
 
 // ---------- Glisser-déposer : liens et MP3 ----------
 

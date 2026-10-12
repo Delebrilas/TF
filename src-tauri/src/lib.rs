@@ -186,6 +186,18 @@ fn clear_finished(app: AppHandle, st: State<AppState>) {
     jobs::persist(&app);
 }
 
+/// Vide toute la file : annule les téléchargements en cours et retire tout.
+#[tauri::command]
+fn clear_all(app: AppHandle, st: State<AppState>) -> usize {
+    let ids: Vec<u64> = std::mem::take(&mut *st.jobs.lock().unwrap()).into_iter().map(|j| j.id).collect();
+    for &id in &ids {
+        jobs::cancel(&app, id);
+        let _ = app.emit("job-removed", id);
+    }
+    jobs::persist(&app);
+    ids.len()
+}
+
 #[tauri::command]
 async fn library_scan(st: State<'_, AppState>) -> CmdResult<Vec<library::LibTrack>> {
     let roots = library_roots(&st.settings.lock().unwrap());
@@ -316,6 +328,7 @@ pub fn run() {
             rename_artist,
             remove_job,
             clear_finished,
+            clear_all,
             retry_job,
             library_scan,
             cover_art,
