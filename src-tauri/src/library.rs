@@ -21,6 +21,10 @@ pub struct LibTrack {
     pub added: u64,
     /// Page d'origine (tag WOAS ou historique des téléchargements).
     pub source: Option<String>,
+    /// Énergie 1–10 (TXXX ENERGY).
+    pub energy: Option<u8>,
+    /// Taille du fichier, pour estimer la durée tant que la grille n'est pas calculée.
+    pub size: u64,
 }
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>, depth: usize) {
@@ -70,9 +74,10 @@ pub fn scan(roots: &[(String, PathBuf)], sources: &std::collections::HashMap<Str
 fn read_track(p: &Path, folder: String) -> LibTrack {
     let tag = Tag::read_from_path(p).ok();
     let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
-    let added = std::fs::metadata(p)
-        .and_then(|m| m.modified())
-        .ok()
+    let meta = std::fs::metadata(p).ok();
+    let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+    let added = meta
+        .and_then(|m| m.modified().ok())
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_secs())
         .unwrap_or(0);
@@ -92,6 +97,8 @@ fn read_track(p: &Path, folder: String) -> LibTrack {
         path: p.display().to_string(),
         added,
         source: t.and_then(crate::tags::source_of),
+        energy: t.and_then(crate::tags::energy_of),
+        size,
     }
 }
 

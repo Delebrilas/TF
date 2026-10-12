@@ -91,7 +91,8 @@ impl Dj {
     pub fn cached_grid(&self, path: &str) -> Option<bpm::Grid> {
         let m = mtime(Path::new(path));
         let d = self.data.lock().unwrap();
-        d.grids.get(path).filter(|c| c.mtime == m).map(|c| c.grid.clone())
+        // Grilles d'avant la v0.7 : sans énergie, on les recalcule.
+        d.grids.get(path).filter(|c| c.mtime == m && c.grid.energy > 0).map(|c| c.grid.clone())
     }
 
     pub fn store_grid(&self, path: &str, grid: &bpm::Grid) {

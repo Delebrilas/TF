@@ -362,6 +362,9 @@ pub struct Grid {
     pub mix_in: f64,
     /// Point de sortie conseillé (début de l'outro ou dernière phrase utile).
     pub mix_out: f64,
+    /// Énergie de 1 (calme) à 10 (très intense), 0 = pas encore calculée.
+    #[serde(default)]
+    pub energy: u8,
 }
 
 const GRID_HOP: usize = 256;
@@ -394,7 +397,7 @@ fn attack_envelope(x: &[f32]) -> Vec<f32> {
 }
 
 /// Énergies par trame : graves (≈ 30–200 Hz) et médiums (≈ 300–3000 Hz).
-fn band_energies(x: &[f32], sr: f64) -> (Vec<f32>, Vec<f32>) {
+fn band_energies(x: &[f32], sr: f64) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
     let window: Vec<f32> = (0..FRAME)
         .map(|i| 0.5 - 0.5 * (2.0 * std::f32::consts::PI * i as f32 / FRAME as f32).cos())
         .collect();
@@ -402,9 +405,11 @@ fn band_energies(x: &[f32], sr: f64) -> (Vec<f32>, Vec<f32>) {
     let hz = sr as f32 / FRAME as f32;
     let bin = |f: f32| ((f / hz).round() as usize).clamp(1, FRAME / 2 - 1);
     let (l0, l1, m0, m1) = (bin(30.0), bin(200.0), bin(300.0), bin(3000.0));
+    let (h0, h1) = (bin(3000.0), bin(5000.0));
     let n = if x.len() > FRAME { (x.len() - FRAME) / GRID_HOP + 1 } else { 0 };
     let mut low = Vec::with_capacity(n);
     let mut mid = Vec::with_capacity(n);
+    let mut high = Vec::with_capacity(n);
     let mut buf = vec![Complex::new(0f32, 0f32); FRAME];
     for f in 0..n {
         let off = f * GRID_HOP;
@@ -414,8 +419,9 @@ fn band_energies(x: &[f32], sr: f64) -> (Vec<f32>, Vec<f32>) {
         fft.process(&mut buf);
         low.push(buf[l0..=l1].iter().map(|c| c.norm_sqr()).sum());
         mid.push(buf[m0..=m1].iter().map(|c| c.norm_sqr()).sum());
+        high.push(buf[h0..=h1].iter().map(|c| c.norm_sqr()).sum());
     }
-    (low, mid)
+    (low, mid, high)
 }
 
 fn percentile(v: &[f32], q: f64) -> f32 {
@@ -504,7 +510,7 @@ pub fn grid_samples(samples: &[f32], sr: u32, bpm_hint: Option<f64>) -> Result<G
     let mut offset = (phi * ATTACK_HOP as f64 + ATTACK_WIN as f64) / dsr + ATTACK_LAG;
     offset = offset.rem_euclid(beat);
 
-    let (low, mid) = band_energies(&mono, dsr);
+    let (low, mid, high) = band_energies(&mono, dsr);
     let gfps = dsr / GRID_HOP as f64;
     // Niveau « morceau plein » : 80e centile (les intros et outros pèsent peu).
     let mid_ref = percentile(&mid, 0.8);
@@ -573,7 +579,9 @@ pub fn grid_samples(samples: &[f32], sr: u32, bpm_hint: Option<f64>) -> Result<G
         first + room - room % 16
     };
     let t = |b: usize| offset + b as f64 * beat;
+    let energy = energy_score(&mono, dsr, &env, fps, &low, &mid, &high, bpm);
     Ok(Grid {
+        energy,
         bpm,
         offset,
         duration,
@@ -586,6 +594,49 @@ pub fn grid_samples(samples: &[f32], sr: u32, bpm_hint: Option<f64>) -> Result<G
         mix_in: t(first),
         mix_out: t(mix_out),
     })
+}
+
+/// Énergie 1–10 : volume des parties fortes, densité d'attaques, brillance et tempo.
+/// Approximation maison (comme l'« energy level » des logiciels DJ), à affiner à l'oreille.
+#[allow(clippy::too_many_arguments)]
+fn energy_score(x: &[f32], sr: f64, attack: &[f32], fps: f64, low: &[f32], mid: &[f32], high: &[f32], bpm: f64) -> u8 {
+    if x.is_empty() {
+        return 1;
+    }
+    // Volume : RMS par tranches de 100 ms, 80e centile en dB.
+    let win = (sr * 0.1) as usize;
+    let rms: Vec<f32> = x
+        .chunks(win.max(1))
+        .map(|c| (c.iter().map(|v| v * v).sum::<f32>() / c.len() as f32).sqrt())
+        .collect();
+    let db = 20.0 * (percentile(&rms, 0.8).max(1e-6) as f64).log10();
+    let loud = ((db + 26.0) / 20.0).clamp(0.0, 1.0);
+    // Densité : attaques nettes par seconde.
+    // Une vraie attaque fait monter l'énergie d'au moins ~4 dB (1 en log naturel).
+    let thr = (percentile(attack, 0.95) * 0.35).max(1.0);
+    let gap = (fps * 0.06) as usize;
+    let mut peaks = 0usize;
+    let mut last = 0usize;
+    for i in 1..attack.len().saturating_sub(1) {
+        if attack[i] > thr && attack[i] >= attack[i - 1] && attack[i] > attack[i + 1] && (peaks == 0 || i - last > gap) {
+            peaks += 1;
+            last = i;
+        }
+    }
+    let secs = attack.len() as f64 / fps;
+    let density = ((peaks as f64 / secs.max(1.0)) / 9.0).clamp(0.0, 1.0);
+    // Brillance : part des aigus dans l'énergie.
+    let ratio: Vec<f32> = (0..low.len())
+        .map(|i| {
+            let tot = low[i] + mid[i] + high[i];
+            if tot > 0.0 { high[i] / tot } else { 0.0 }
+        })
+        .collect();
+    let mean = ratio.iter().sum::<f32>() as f64 / ratio.len().max(1) as f64;
+    let bright = (mean / 0.06).clamp(0.0, 1.0);
+    let tempo = ((bpm - 85.0) / 70.0).clamp(0.0, 1.0);
+    let score = 0.4 * loud + 0.25 * density + 0.2 * bright + 0.15 * tempo;
+    (1.0 + 9.0 * score).round().clamp(1.0, 10.0) as u8
 }
 
 pub fn grid(path: &Path, bpm_hint: Option<f64>) -> Result<Grid> {
@@ -628,6 +679,37 @@ mod grid_tests {
         let out = first + 96.0 * beat;
         assert!((g.mix_out - out).abs() < 4.0 * beat, "mix_out {} au lieu de {out}", g.mix_out);
         assert!((g.mix_in - first).abs() < 0.03, "{g:?}");
+        assert!((1..=10).contains(&g.energy), "{g:?}");
+    }
+
+    /// Une nappe douce est moins énergique qu'un kick serré + charley à 140.
+    #[test]
+    fn energy_orders_tracks() {
+        let sr = 22050u32;
+        let n = (40.0 * sr as f64) as usize;
+        let soft: Vec<f32> = (0..n)
+            .map(|i| {
+                let t = i as f64 / sr as f64;
+                let k = t % (60.0 / 90.0);
+                (0.08 * (2.0 * std::f64::consts::PI * 220.0 * t).sin() + 0.1 * (-k * 20.0).exp() * (2.0 * std::f64::consts::PI * 60.0 * k).sin()) as f32
+            })
+            .collect();
+        let mut rng = 7u32;
+        let hard: Vec<f32> = (0..n)
+            .map(|i| {
+                let t = i as f64 / sr as f64;
+                let beat = 60.0 / 140.0;
+                let k = t % beat;
+                let h = t % (beat / 2.0);
+                rng = rng.wrapping_mul(1664525).wrapping_add(1013904223);
+                let noise = (rng >> 8) as f64 / (1u32 << 24) as f64 - 0.5;
+                (0.9 * (-k * 25.0).exp() * (2.0 * std::f64::consts::PI * 55.0 * k).sin() + 0.5 * (-h * 60.0).exp() * noise
+                    + 0.2 * (2.0 * std::f64::consts::PI * 440.0 * t).sin()) as f32
+            })
+            .collect();
+        let e1 = grid_samples(&soft, sr, Some(90.0)).unwrap().energy;
+        let e2 = grid_samples(&hard, sr, Some(140.0)).unwrap().energy;
+        assert!(e2 >= e1 + 3, "doux {e1}, fort {e2}");
     }
 
     /// Tempo de départ un peu faux (128,3 au lieu de 128) : corrigé.

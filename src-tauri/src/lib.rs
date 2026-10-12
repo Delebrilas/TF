@@ -258,10 +258,15 @@ async fn beat_grid(dj: State<'_, dj::Dj>, path: String, bpm: Option<f64>) -> Cmd
         return Ok(g);
     }
     let p = path.clone();
-    let g = tauri::async_runtime::spawn_blocking(move || bpm::grid(std::path::Path::new(&p), bpm))
-        .await
-        .map_err(err)?
-        .map_err(err)?;
+    let g = tauri::async_runtime::spawn_blocking(move || {
+        let g = bpm::grid(std::path::Path::new(&p), bpm)?;
+        // Énergie écrite dans le fichier (avant la mise en cache : le fichier change).
+        let _ = tags::set_energy(std::path::Path::new(&p), g.energy);
+        anyhow::Ok(g)
+    })
+    .await
+    .map_err(err)?
+    .map_err(err)?;
     dj.store_grid(&path, &g);
     Ok(g)
 }

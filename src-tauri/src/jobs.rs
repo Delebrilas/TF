@@ -630,7 +630,13 @@ async fn run<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, cancel: Arc<Notify>
         if dj.cached_grid(&path).is_none() {
             let hint = bpm_value;
             let p = final_path.clone();
-            if let Ok(Ok(g)) = tokio::task::spawn_blocking(move || bpm::grid(&p, hint)).await {
+            let r = tokio::task::spawn_blocking(move || {
+                let g = bpm::grid(&p, hint)?;
+                let _ = crate::tags::set_energy(&p, g.energy);
+                anyhow::Ok(g)
+            })
+            .await;
+            if let Ok(Ok(g)) = r {
                 dj.store_grid(&path, &g);
             }
         }

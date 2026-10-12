@@ -51,6 +51,25 @@ pub fn set_artist(path: &Path, artist: &str) -> Result<()> {
     Ok(())
 }
 
+/// Énergie 1–10 dans un TXXX « ENERGY » (lu par la bibliothèque).
+pub fn set_energy(path: &Path, energy: u8) -> Result<()> {
+    let mut tag = Tag::read_from_path(path).unwrap_or_else(|_| Tag::new());
+    if energy_of(&tag) == Some(energy) {
+        return Ok(());
+    }
+    tag.remove_extended_text(Some("ENERGY"), None);
+    tag.add_frame(id3::frame::ExtendedText { description: "ENERGY".into(), value: energy.to_string() });
+    tag.write_to_path(path, Version::Id3v23)?;
+    Ok(())
+}
+
+pub fn energy_of(tag: &Tag) -> Option<u8> {
+    tag.extended_texts()
+        .find(|t| t.description.eq_ignore_ascii_case("ENERGY"))
+        .and_then(|t| t.value.trim().parse::<u8>().ok())
+        .filter(|e| (1..=10).contains(e))
+}
+
 pub fn read_key(path: &Path) -> Option<String> {
     let tag = Tag::read_from_path(path).ok()?;
     tag.get("TKEY")?.content().text().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
