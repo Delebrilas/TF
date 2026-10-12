@@ -73,13 +73,14 @@ fn find_deno<R: tauri::Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
 }
 
 /// Vrai si cette version de yt-dlp connaît `--js-runtimes` (mis en cache).
-fn supports_js_runtimes(ytdlp: &Path) -> bool {
+/// Options reconnues par ce yt-dlp (lues dans `--help`, une fois par exécutable).
+fn supports(ytdlp: &Path, flag: &str) -> bool {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
-    static CACHE: OnceLock<Mutex<HashMap<PathBuf, bool>>> = OnceLock::new();
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, String>>> = OnceLock::new();
     let cache = CACHE.get_or_init(Default::default);
-    if let Some(v) = cache.lock().unwrap().get(ytdlp) {
-        return *v;
+    if let Some(help) = cache.lock().unwrap().get(ytdlp) {
+        return help.contains(flag);
     }
     let mut cmd = std::process::Command::new(ytdlp);
     cmd.arg("--help");
@@ -88,11 +89,11 @@ fn supports_js_runtimes(ytdlp: &Path) -> bool {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000);
     }
-    let ok = cmd
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains("--js-runtimes"))
-        .unwrap_or(false);
-    cache.lock().unwrap().insert(ytdlp.to_path_buf(), ok);
+    let help = cmd.output().map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
+    let ok = help.contains(flag);
+    if !help.is_empty() {
+        cache.lock().unwrap().insert(ytdlp.to_path_buf(), help);
+    }
     ok
 }
 
@@ -109,9 +110,15 @@ fn cookie_args<R: tauri::Runtime>(app: &AppHandle<R>) -> Vec<String> {
 fn extra_args<R: tauri::Runtime>(app: &AppHandle<R>, ytdlp: &Path) -> Vec<String> {
     let mut extra = Vec::new();
     if let Some(deno) = find_deno(app) {
-        if supports_js_runtimes(ytdlp) {
+        if supports(ytdlp, "--js-runtimes") {
             extra.push("--js-runtimes".into());
             extra.push(format!("deno:{}", deno.display()));
+        }
+        // Solveur des défis JS de YouTube (EJS) : sans lui, signatures et
+        // « n challenge » échouent (« The page needs to be reloaded », 403).
+        if supports(ytdlp, "--remote-components") {
+            extra.push("--remote-components".into());
+            extra.push("ejs:github".into());
         }
     }
     extra
@@ -353,6 +360,19 @@ pub async fn self_update<R: tauri::Runtime>(app: &AppHandle<R>) {
 pub fn start_maintenance<R: tauri::Runtime>(app: AppHandle<R>) {
     tauri::async_runtime::spawn(async move {
         loop {
+            // Un yt-dlp trouvé dans le PATH (installé avec pip) n'embarque pas
+            // forcément le solveur EJS et ne se met pas à jour avec -U :
+            // on installe la version autonome officielle dans le dossier de l'app.
+            if let Ok(dir) = bin_dir(&app) {
+                let local = dir.join(exe("yt-dlp"));
+                if !local.is_file() && ytdlp_path(&app).is_some() {
+                    let _ = tokio::fs::create_dir_all(&dir).await;
+                    let tmp = dir.join(exe("yt-dlp-new"));
+                    if download(&app, "yt-dlp", ytdlp_url(), &tmp).await.is_ok() && make_executable(&tmp).is_ok() {
+                        let _ = tokio::fs::rename(&tmp, &local).await;
+                    }
+                }
+            }
             if ytdlp_path(&app).is_some() {
                 let _ = install_deno(&app).await;
                 self_update(&app).await;
