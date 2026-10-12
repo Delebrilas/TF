@@ -5,7 +5,7 @@
 
 // ---------- Options (chacune activable à la main) ----------
 
-const DJ_DEFAULTS = { autoPoint: true, sync: true, ramp: true, bassSwap: true, keylock: false, autoNext: false, fade: "power", bars: "auto" };
+const DJ_DEFAULTS = { noRepeat: true, autoPoint: true, sync: true, ramp: true, bassSwap: true, keylock: false, autoNext: false, fade: "power", bars: "auto" };
 let djOpts = { ...DJ_DEFAULTS };
 try {
   djOpts = { ...DJ_DEFAULTS, ...JSON.parse(localStorage.getItem("tf-dj") || "{}") };
@@ -204,6 +204,7 @@ function setRate(d, r, at) {
 
 function startSource(d, when, pos) {
   stopSource(d);
+  markPlayed(d.track);
   const src = dctx.createBufferSource();
   src.buffer = d.buf;
   src.connect(d.n.plain);
@@ -571,8 +572,9 @@ function loadBestNext() {
   const a = decks[masterDeck];
   const free = other(masterDeck);
   if (!a.track) return;
-  const list = nextFor(a.track).filter((x) => x.t.path !== a.track.path);
+  const list = nextFor(a.track, true);
   if (list.length) loadDeck(free, list[0].t);
+  else toast("Plus rien à enchaîner : tous les morceaux ont déjà été joués", true);
 }
 
 // Pics pour la forme d'onde : 100 colonnes par seconde.
@@ -957,18 +959,46 @@ function frame() {
 let pairs = [];
 let browserTab = "all";
 
-function nextFor(ref) {
-  const fav = pairs.filter((p) => p.a === ref.path).map((p) => library.find((t) => t.path === p.b)).filter(Boolean);
-  const out = fav.map((t) => ({ t, why: "★ Paire favorite" + (pairNote(ref.path, t.path) ? " · " + pairNote(ref.path, t.path) : "") }));
-  if (ref.key && ref.bpm) {
-    for (const { o, rel, gap } of suggestionsFor(ref)) {
-      if (out.some((x) => x.t.path === o.path)) continue;
-      const g = grids.get(o.path);
-      out.push({ t: o, why: `${rel.label} · ${gap < 0.005 ? "même tempo" : "écart " + (gap * 100).toFixed(1).replace(".", ",") + " %"}${g?.dj_intro ? " · intro DJ" : ""}` });
-    }
+// Morceaux déjà passés dans la session (chemin → ordre de passage).
+const played = new Map();
+function markPlayed(t) {
+  if (t && !played.has(t.path)) played.set(t.path, played.size + 1);
+}
+
+// Suggestions pour enchaîner après `ref`. Sans répétition (option), les morceaux
+// déjà joués sont écartés, sinon deux morceaux très compatibles bouclent entre eux.
+// `wide` : si rien de compatible, élargit au tempo proche puis à tout le reste.
+function nextFor(ref, wide = false) {
+  const onDecks = new Set(Object.values(decks).map((d) => d.track?.path).filter(Boolean));
+  const skip = (p) => p === ref.path || onDecks.has(p) || (djOpts.noRepeat && played.has(p));
+  const out = [];
+  const seen = new Set();
+  const add = (t, why) => {
+    if (seen.has(t.path) || skip(t.path)) return;
+    seen.add(t.path);
+    out.push({ t, why });
+  };
+  for (const p of pairs.filter((p) => p.a === ref.path)) {
+    const t = library.find((x) => x.path === p.b);
+    if (t) add(t, "★ Paire favorite" + (p.note ? " · " + p.note : ""));
+  }
+  const pct = (g) => (g < 0.005 ? "même tempo" : "écart " + (g * 100).toFixed(1).replace(".", ",") + " %");
+  const scored = library
+    .filter((o) => o.bpm && !skip(o.path))
+    .map((o) => ({ o, rel: keyRelation(ref.key, o.key), gap: bpmGap(ref.bpm, o.bpm) }))
+    .filter((x) => x.gap != null);
+  const intro = (o) => (grids.get(o.path)?.dj_intro ? " · intro DJ" : "");
+  scored
+    .filter((x) => x.rel && x.gap <= 0.06)
+    .sort((a, b) => a.rel.rank * 4 + a.gap * 100 - (b.rel.rank * 4 + b.gap * 100))
+    .forEach(({ o, rel, gap }) => add(o, `${rel.label} · ${pct(gap)}${intro(o)}`));
+  if (wide && !out.length) {
+    scored.sort((a, b) => a.gap - b.gap).forEach(({ o, gap }) => add(o, `Tempo proche · ${pct(gap)}${intro(o)}`));
   }
   return out;
 }
+const hiddenPlayed = (ref) =>
+  djOpts.noRepeat ? [...played.keys()].filter((p) => p !== ref.path && !Object.values(decks).some((d) => d.track?.path === p)).length : 0;
 const pairNote = (a, b) => pairs.find((p) => p.a === a && p.b === b)?.note || "";
 
 function browserItems() {
@@ -1004,6 +1034,10 @@ function trackRow(t, why) {
   if (t.key) right.append(keyPill(t.key));
   right.append(` ${t.bpm ? Math.round(t.bpm) : "–"} BPM`);
   if (grids.get(t.path)?.dj_intro) right.prepend(badge("Intro", "ok"), " ");
+  if (played.has(t.path)) {
+    li.classList.add("played");
+    right.prepend(badge("Déjà joué"), " ");
+  }
   if (t.has_cover) coverFor(t.path).then((u) => setImg(li.querySelector("img"), u));
   li.onclick = (e) => {
     const b = e.target.closest("[data-load]");
@@ -1021,6 +1055,24 @@ function renderBrowser() {
   const ul = $("#dj-list");
   ul.replaceChildren();
   const items = browserItems();
+  const ref = decks[masterDeck].track;
+  const hidden = browserTab === "next" && ref ? hiddenPlayed(ref) : 0;
+  const footer = () => {
+    if (!hidden) return;
+    const li = document.createElement("li");
+    li.className = "empty-s muted small played-note";
+    li.append(`${hidden} morceau${hidden > 1 ? "x" : ""} déjà joué${hidden > 1 ? "s" : ""} masqué${hidden > 1 ? "s" : ""}. `);
+    const b = document.createElement("button");
+    b.className = "link";
+    b.textContent = "Remettre à zéro";
+    b.onclick = () => {
+      played.clear();
+      for (const d of Object.values(decks)) if (d.playing) markPlayed(d.track);
+      renderBrowser();
+    };
+    li.append(b);
+    ul.appendChild(li);
+  };
   if (!items.length) {
     const li = document.createElement("li");
     li.className = "empty-s muted";
@@ -1033,7 +1085,7 @@ function renderBrowser() {
             : "Charge un morceau sur une platine pour voir quoi enchaîner."
           : "Aucun morceau.";
     ul.appendChild(li);
-    return;
+    return footer();
   }
   const frag = document.createDocumentFragment();
   for (const it of items) {
@@ -1071,6 +1123,7 @@ function renderBrowser() {
     } else frag.appendChild(trackRow(it.t, it.why));
   }
   ul.appendChild(frag);
+  footer();
 }
 
 $("#dj-tabs").onclick = (e) => {

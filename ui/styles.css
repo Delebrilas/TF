@@ -796,3 +796,5 @@ button.icon.sp { color: var(--spotify); }
 .dj input[type=range]::-webkit-slider-thumb { margin-top: -5px; }
 .xfader input[type=range]::-webkit-slider-thumb { width: 22px; height: 16px; border-radius: 4px; margin-top: -6px; }
 .mix-opts .opt small { line-height: 1.3; }
+.dj-list li.played { opacity: .55; }
+.dj-list li.played-note { display: flex; align-items: center; gap: 4px; }
