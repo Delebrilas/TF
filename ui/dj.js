@@ -771,6 +771,15 @@ let lastMix = null;
 function tick() {
   if (!dctx) return;
   const t = dctx.currentTime;
+  // Le sens suit la platine qui joue : on peut mixer A → B comme B → A.
+  if (!mix) {
+    const playing = Object.values(decks).filter((d) => d.playing);
+    if (playing.length === 1 && playing[0].id !== masterDeck) {
+      masterDeck = playing[0].id;
+      plannedStyle = null;
+      renderAll();
+    }
+  }
   if (mix?.armed) {
     const a = decks[mix.from];
     if (!a.playing) cancelMix();
@@ -1035,6 +1044,8 @@ function renderMixer() {
   const ok = canMix();
   const go = $("#mix-go");
   go.disabled = !ok && !mix;
+  // Inverser le sens : possible tant qu'aucune transition n'est lancée et que la cible ne joue pas seule.
+  $("#mix-swap").disabled = !ok || !!(mix && !mix.auto) || (a.playing && !b.playing);
   $("#mix-preview").disabled = !ok || !!(mix && !mix.armed);
   $("#mix-pair").disabled = !(a.track && b.track);
   const arrow = `${a.id} → ${b.id}`;
@@ -1470,6 +1481,12 @@ $("#dj-analyze").onclick = async () => {
 // ---------- Mixeur : boutons et options ----------
 
 $("#mix-go").onclick = () => (mix && !mix.auto ? cancelMix(true) : startMix(true));
+$("#mix-swap").onclick = () => {
+  if (mix && !mix.auto) return;
+  mix = null;
+  masterDeck = other(masterDeck);
+  renderAll();
+};
 $("#mix-preview").onclick = preview;
 $("#xfader").oninput = () => {
   if (mix && !mix.armed) cancelMix(true);
