@@ -37,6 +37,8 @@ pub struct Settings {
     pub pulse: bool,
     /// Navigateur dont yt-dlp lit les cookies (session YouTube), "" = aucun.
     pub cookies_browser: String,
+    /// Client ID de l'app développeur Spotify de l'utilisateur.
+    pub spotify_client_id: String,
 }
 
 pub const DEFAULT_TEMPLATE: &str = "{artist} - {title}";
@@ -61,6 +63,7 @@ impl Default for Settings {
             ambient: true,
             pulse: true,
             cookies_browser: String::new(),
+            spotify_client_id: String::new(),
         }
     }
 }

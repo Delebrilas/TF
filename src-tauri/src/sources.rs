@@ -5,7 +5,7 @@
 //! correspondance sur YouTube. YouTube et SoundCloud passent par yt-dlp.
 
 use crate::tools::Tools;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -76,7 +76,11 @@ pub fn http() -> reqwest::Client {
 
 pub async fn resolve(tools: &Tools, url: &str) -> Result<Resolved> {
     match detect(url) {
-        Source::Spotify => resolve_spotify(url).await,
+        Source::Spotify => match crate::spotify::resolve(url).await {
+            Some(r) => r,
+            None if url.contains("/collection/") => bail!("Connecte-toi à Spotify (Réglages › Comptes) pour récupérer tes titres likés"),
+            None => resolve_spotify(url).await,
+        },
         src => match resolve_ytdlp(tools, url, src).await {
             Err(e) if crate::tools::retry_without_cookies(&e.to_string()) && !tools.cookies.is_empty() => {
                 resolve_ytdlp(&tools.without_cookies(), url, src).await

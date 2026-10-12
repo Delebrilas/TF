@@ -8,6 +8,7 @@ mod library;
 mod online;
 mod settings;
 mod sources;
+mod spotify;
 mod tags;
 mod tools;
 mod watch;
@@ -186,6 +187,32 @@ fn clear_finished(app: AppHandle, st: State<AppState>) {
     jobs::persist(&app);
 }
 
+#[tauri::command]
+fn spotify_status() -> spotify::Status {
+    spotify::status()
+}
+
+#[tauri::command]
+async fn spotify_login(app: AppHandle, st: State<'_, AppState>) -> CmdResult<spotify::Status> {
+    let id = st.settings.lock().unwrap().spotify_client_id.clone();
+    spotify::login(&id, |url| {
+        use tauri_plugin_opener::OpenerExt;
+        app.opener().open_url(url, None::<&str>).map_err(|e| anyhow::anyhow!(e.to_string()))
+    })
+    .await
+    .map_err(err)
+}
+
+#[tauri::command]
+fn spotify_logout() {
+    spotify::logout();
+}
+
+#[tauri::command]
+async fn spotify_playlists() -> CmdResult<Vec<spotify::Playlist>> {
+    spotify::playlists().await.map_err(err)
+}
+
 /// Vide toute la file : annule les téléchargements en cours et retire tout.
 #[tauri::command]
 fn clear_all(app: AppHandle, st: State<AppState>) -> usize {
@@ -362,6 +389,9 @@ pub fn run() {
                 allow_dir(&handle, f);
             }
             app.manage(AppState::new(s));
+            if let Ok(d) = handle.path().app_data_dir() {
+                spotify::init(d.join("spotify.json"));
+            }
             app.manage(history::History(std::sync::Mutex::new(history::load(&handle))));
             app.manage(watch::WatchState(std::sync::Mutex::new(watch::load(&handle))));
             jobs::restore(&handle);
@@ -381,6 +411,10 @@ pub fn run() {
             remove_job,
             clear_finished,
             clear_all,
+            spotify_status,
+            spotify_login,
+            spotify_logout,
+            spotify_playlists,
             trash_files,
             retry_failed,
             remove_jobs,
