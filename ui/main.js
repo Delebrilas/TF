@@ -7,6 +7,9 @@ const listen = T.event.listen;
 const $ = (s) => document.querySelector(s);
 const jobs = new Map();
 let settings = null;
+const notes = new Map(); // chemin → note perso (206)
+const grids = new Map(); // chemin → grille / intro DJ (242)
+let introOnly = false;
 
 const STATUS = {
   queued: "En attente",
@@ -109,6 +112,7 @@ function showView(v) {
   for (const b of $("#tabs").children) b.classList.toggle("on", b.dataset.view === v);
   for (const s of document.querySelectorAll(".view")) s.classList.toggle("hidden", s.id !== "view-" + v);
   if (v === "library") loadLibrary();
+  if (v === "dj") djShow();
   hideCtx();
   renderSelBar();
 }
@@ -324,7 +328,11 @@ function renderPause() {
   $("#btn-pause").textContent = settings.paused ? "Reprendre" : "Mettre en pause";
   jobs.forEach((j) => j.status === "queued" && render(j));
 }
-$("#btn-pause").onclick = () => saveSettings({ paused: !settings.paused }).then(renderPause);
+$("#btn-pause").onclick = () =>
+  saveSettings({ paused: !settings.paused }).then(() => {
+    renderPause();
+    T.event.emit?.("pause-changed", !!settings.paused);
+  });
 
 // ---------- Ajout ----------
 
@@ -570,6 +578,8 @@ async function loadLibrary(force = false) {
   try {
     library = await invoke("library_scan");
     libLoaded = true;
+    const known = await invoke("cached_grids", { paths: library.map((t) => t.path) }).catch(() => ({}));
+    for (const [k, g] of Object.entries(known || {})) grids.set(k, g);
   } catch (e) {
     toast(String(e), true);
   }
@@ -650,7 +660,8 @@ function filteredLibrary() {
   let list = library.filter((t) =>
     inFolder(t, libFolder) &&
     (lo <= BPM_MIN && hi >= BPM_MAX || (t.bpm && t.bpm >= lo - 0.5 && t.bpm <= hi + 0.5)) &&
-    (!q || [t.title, t.artist, t.album, t.genre, t.bpm && String(Math.round(t.bpm))].some((v) => v && String(v).toLowerCase().includes(q)))
+    (!introOnly || grids.get(t.path)?.dj_intro) &&
+    (!q || [t.title, t.artist, t.album, t.genre, notes.get(t.path), t.bpm && String(Math.round(t.bpm))].some((v) => v && String(v).toLowerCase().includes(q)))
   );
   const cmp = (a, b) => (a || "\uffff").localeCompare(b || "\uffff", "fr", { sensitivity: "base", numeric: true });
   const bpm = (t) => t.bpm ?? 9999;
@@ -714,6 +725,7 @@ function renderLibrary() {
     row.oncontextmenu = (e) => trackMenu(e, t, list, i);
     row.querySelector(".l-title").textContent = t.title;
     row.querySelector(".l-artist").textContent = t.artist || "";
+    decorate(row.querySelector(".l-title"), t);
     row.querySelector(".l-album").textContent = t.album || "";
     row.querySelector(".l-genre").textContent = t.genre || "";
     row.querySelector(".l-bpm").textContent = t.bpm ? fmt(Math.round(t.bpm * 10) / 10) : "–";
@@ -759,6 +771,26 @@ $("#lib-play").onclick = () => {
   const list = filteredLibrary();
   if (list.length) playList(list.map(libTrack), 0);
 };
+
+// Petits repères dans la bibliothèque : intro DJ et note.
+function decorate(el, t) {
+  const g = grids.get(t.path);
+  if (g?.dj_intro) {
+    const b = document.createElement("span");
+    b.className = "badge-s ok";
+    b.textContent = "Intro";
+    b.title = `Intro DJ : ${g.intro_beats / 4} mesures de rythmique seule`;
+    el.append(" ", b);
+  }
+  const n = notes.get(t.path);
+  if (n) {
+    const i = document.createElement("span");
+    i.className = "note-mark";
+    i.textContent = "✎";
+    i.title = n;
+    el.append(" ", i);
+  }
+}
 
 const libTrack = (t) => ({ path: t.path, title: t.title, artist: t.artist, bpm: t.bpm, key: t.key, hasCover: t.has_cover });
 
@@ -1333,6 +1365,8 @@ function fillSettings() {
   setSwitch("#s-clip", settings.watch_clipboard);
   setSwitch("#s-ambient", settings.ambient);
   setSwitch("#s-pulse", settings.pulse);
+  setSwitch("#s-notify", settings.notify);
+  setSwitch("#s-tray", settings.close_to_tray);
   document.body.classList.toggle("ambient-on", !!settings.ambient);
   const seg = (id, v) => { for (const b of $(id).children) b.classList.toggle("on", b.dataset.v === String(v)); };
   seg("#s-quality", settings.quality);
@@ -1385,6 +1419,8 @@ $("#s-skip").onclick = () => saveSettings({ skip_existing: !settings.skip_existi
 $("#s-clip").onclick = () => saveSettings({ watch_clipboard: !settings.watch_clipboard });
 $("#s-ambient").onclick = () => saveSettings({ ambient: !settings.ambient });
 $("#s-pulse").onclick = () => saveSettings({ pulse: !settings.pulse });
+$("#s-notify").onclick = () => saveSettings({ notify: !settings.notify });
+$("#s-tray").onclick = () => saveSettings({ close_to_tray: !settings.close_to_tray });
 segClick("#s-cookies", "cookies_browser");
 $("#s-key").onchange = (e) => saveSettings({ getsongbpm_key: e.target.value.trim() });
 
@@ -1544,6 +1580,7 @@ function renderMosaic(list) {
     el.querySelector(".t-initial").textContent = (t.artist || t.title || "?").trim().charAt(0).toUpperCase();
     el.querySelector("b").textContent = t.title;
     el.querySelector("small").textContent = t.artist || "";
+    decorate(el.querySelector("b"), t);
     const tags = el.querySelector(".t-tags");
     if (t.bpm) tags.append(`${Math.round(t.bpm)} BPM`);
     if (t.key) tags.append(" ", keyPill(t.key));
@@ -2071,6 +2108,7 @@ function trackMenu(e, t, list, i) {
     const many = selectedTracks();
     return showCtx(e, [
       { label: `Lire les ${many.length} morceaux`, icon: "i-play", run: () => playList(many.map(libTrack), 0) },
+      { label: `Exporter ${many.length} morceaux en CSV`, icon: "i-csv", run: () => exportCsv(many) },
       "-",
       { label: `Mettre ${many.length} morceaux à la corbeille`, icon: "i-trash", danger: true, run: () => trashPaths(many.map((x) => x.path)) },
     ]);
@@ -2078,6 +2116,9 @@ function trackMenu(e, t, list, i) {
   showCtx(e, [
     { label: "Lire", icon: "i-play", run: () => playList(list.map(libTrack), i) },
     { label: "Morceaux à enchaîner", icon: "i-mix", run: () => showSuggestions(libTrack(t)) },
+    { label: "Charger sur la platine A", icon: "i-cue", run: () => (showView("dj"), loadDeck("A", t)) },
+    { label: "Charger sur la platine B", icon: "i-cue", run: () => (showView("dj"), loadDeck("B", t)) },
+    { label: notes.get(t.path) ? "Modifier la note" : "Ajouter une note", icon: "i-pen", run: () => editNote(t) },
     "-",
     { label: "Ouvrir le dossier", icon: "i-folder", run: () => T.opener.revealItemInDir(t.path) },
     t.source && { label: "Ouvrir la page d'origine", icon: "i-external", run: () => openSource(t.source) },

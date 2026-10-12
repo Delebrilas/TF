@@ -43,6 +43,11 @@
     <symbol id="i-external" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M14 4h6v6M20 4l-9 9M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="4" fill="none" stroke="currentColor" stroke-width="2"/><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="m8 12 3 3 5-6"/></symbol>
+    <symbol id="i-star" viewBox="0 0 24 24"><path fill="currentColor" d="m12 2.8 2.8 5.8 6.3.9-4.6 4.4 1.1 6.3L12 17.2l-5.6 3 1.1-6.3-4.6-4.4 6.3-.9z"/></symbol>
+    <symbol id="i-cue" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M6 4v16M10 12l9-7v14z"/></symbol>
+    <symbol id="i-sync" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M20 11a8 8 0 0 0-14.3-4.9L4 8M4 4v4h4M4 13a8 8 0 0 0 14.3 4.9L20 16M20 20v-4h-4"/></symbol>
+    <symbol id="i-csv" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M12 11v6M9 14l3 3 3-3"/></symbol>
+    <symbol id="i-pen" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="m20 20-3.5-3.5"/></symbol>
   </svg>
 
@@ -54,6 +59,7 @@
     <nav class="tabs" id="tabs">
       <button data-view="queue" class="on">File <span class="badge" id="badge-queue"></span></button>
       <button data-view="library">Bibliothèque</button>
+      <button data-view="dj">DJ</button>
       <button data-view="watch">Playlists suivies <span class="badge" id="badge-watch"></span></button>
     </nav>
     <div class="top-actions">
@@ -140,6 +146,8 @@
                 <button data-v="list" title="Liste"><svg><use href="#i-list"/></svg></button>
               </div>
               <button class="icon" id="lib-select" title="Tout sélectionner (Ctrl+A)"><svg><use href="#i-check"/></svg></button>
+              <button class="icon" id="lib-intro" title="Seulement les morceaux avec une intro DJ (rythmique seule)">Intro</button>
+              <button class="icon" id="lib-csv" title="Exporter la liste affichée en CSV"><svg><use href="#i-csv"/></svg></button>
               <button class="icon" id="lib-artists" title="Fusionner les artistes mal orthographiés"><svg><use href="#i-merge"/></svg></button>
               <button class="primary small" id="lib-play"><svg><use href="#i-play"/></svg><span>Lire</span></button>
             </div>
@@ -158,6 +166,53 @@
           </div>
           <div class="mosaic hidden" id="lib-grid"></div>
           <div class="empty hidden" id="lib-empty"><p>Aucun MP3 ici pour l'instant.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- DJ -->
+    <section class="view hidden" id="view-dj">
+      <div class="dj">
+        <div class="waves">
+          <div class="wave-row" data-deck="A"><span class="wave-tag">A</span><canvas class="zoom"></canvas></div>
+          <div class="wave-row" data-deck="B"><span class="wave-tag">B</span><canvas class="zoom"></canvas></div>
+        </div>
+        <div class="decks">
+          <div class="deck" data-deck="A"></div>
+          <div class="mixer">
+            <div class="mix-status" id="mix-status">Charge deux morceaux</div>
+            <div class="mix-buttons">
+              <button class="primary" id="mix-go" disabled><svg><use href="#i-mix"/></svg><span>Mixer</span></button>
+              <button class="ghost" id="mix-preview" disabled title="Écouter la transition, puis revenir où tu étais">Pré-écouter</button>
+            </div>
+            <div class="xfader">
+              <span>A</span><input type="range" id="xfader" min="0" max="1000" value="0" /><span>B</span>
+            </div>
+            <div class="mix-plan muted small" id="mix-plan"></div>
+            <button class="link" id="mix-pair" disabled><svg><use href="#i-star"/></svg> Garder cette paire</button>
+            <details class="mix-opts" id="mix-opts" open>
+              <summary>Options de transition</summary>
+              <div class="opt"><button type="button" class="switch" role="switch" data-opt="autoPoint"></button><span><b>Point de transition auto</b><small>Mixe tout seul à la sortie conseillée du morceau.</small></span></div>
+              <div class="opt"><button type="button" class="switch" role="switch" data-opt="sync"></button><span><b>Battements alignés</b><small>Le morceau suivant démarre calé sur la mesure.</small></span></div>
+              <div class="opt"><button type="button" class="switch" role="switch" data-opt="ramp"></button><span><b>Rampe de tempo</b><small>Le BPM glisse du morceau A au B pendant le fondu.</small></span></div>
+              <div class="opt"><button type="button" class="switch" role="switch" data-opt="bassSwap"></button><span><b>Échange des basses</b><small>Coupe les basses du suivant, puis les échange au milieu.</small></span></div>
+              <div class="opt"><button type="button" class="switch" role="switch" data-opt="keylock"></button><span><b>Keylock</b><small>Garde la tonalité quand le tempo change.</small></span></div>
+              <div class="opt"><button type="button" class="switch" role="switch" data-opt="autoNext"></button><span><b>Enchaîner tout seul</b><small>Charge la meilleure suggestion après chaque transition.</small></span></div>
+              <div class="opt-row"><span>Fondu</span><div class="segmented" data-opt="fade"><button data-v="power">Doux</button><button data-v="linear">Linéaire</button><button data-v="cut">Coupure</button></div></div>
+              <div class="opt-row"><span>Durée</span><div class="segmented" data-opt="bars"><button data-v="auto">Auto</button><button data-v="4">4</button><button data-v="8">8</button><button data-v="16">16</button><button data-v="32">32</button></div><small class="muted">mesures</small></div>
+            </details>
+          </div>
+          <div class="deck" data-deck="B"></div>
+        </div>
+        <div class="dj-browser">
+          <div class="segmented" id="dj-tabs">
+            <button data-v="next" class="on">À enchaîner</button>
+            <button data-v="pairs">Paires favorites</button>
+            <button data-v="all">Bibliothèque</button>
+          </div>
+          <label class="search"><svg><use href="#i-search"/></svg><input id="dj-search" type="text" placeholder="Titre, artiste, note, BPM…" /></label>
+          <button class="link" id="dj-analyze" title="Repère les intros et outros de toute la bibliothèque">Analyser les intros</button>
+          <ul class="dj-list" id="dj-list"></ul>
         </div>
       </div>
     </section>
@@ -357,6 +412,16 @@
       </div>
 
       <div class="toggle">
+        <button type="button" class="switch" role="switch" id="s-notify"></button>
+        <span><b>Notification quand un morceau est prêt</b><small>Avec son BPM, quand la fenêtre est en arrière-plan.</small></span>
+      </div>
+
+      <div class="toggle">
+        <button type="button" class="switch" role="switch" id="s-tray"></button>
+        <span><b>Fermer dans la zone de notification</b><small>La croix range TrackFetcher près de l'horloge : les téléchargements continuent.</small></span>
+      </div>
+
+      <div class="toggle">
         <button type="button" class="switch" role="switch" id="s-verify" aria-checked="false"></button>
         <span><b>Vérifier le BPM en ligne</b><small>Compare l'analyse avec Deezer, GetSongBPM et la description.</small></span>
       </div>
@@ -391,6 +456,18 @@
         <button class="icon" id="mp-close" title="Fermer"><svg><use href="#i-x"/></svg></button>
       </div>
       <div id="mp-list"></div>
+    </div>
+  </div>
+
+  <div class="modal hidden" id="ask">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="ask-title"></h3>
+        <button class="icon" id="ask-close" title="Fermer"><svg><use href="#i-x"/></svg></button>
+      </div>
+      <p class="muted small" id="ask-sub"></p>
+      <textarea id="ask-text" rows="4" spellcheck="true"></textarea>
+      <div class="ask-actions"><button class="ghost" id="ask-cancel">Annuler</button><button class="primary" id="ask-ok">Enregistrer</button></div>
     </div>
   </div>
 
@@ -450,5 +527,6 @@
   </template>
 
   <script src="main.js"></script>
+  <script src="dj.js"></script>
 </body>
 </html>

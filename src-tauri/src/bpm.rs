@@ -57,7 +57,7 @@ fn decode_mono(path: &Path) -> Result<(Vec<f32>, u32)> {
         hint.with_extension(ext);
     }
     let probed = symphonia::default::get_probe()
-        .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
+        .format(&hint, mss, &FormatOptions { enable_gapless: true, ..Default::default() }, &MetadataOptions::default())
         .context("Format audio non reconnu")?;
     let mut format = probed.format;
     let track = format
@@ -418,13 +418,17 @@ fn band_energies(x: &[f32], sr: f64) -> (Vec<f32>, Vec<f32>) {
     (low, mid)
 }
 
-fn median(v: &[f32]) -> f32 {
+fn percentile(v: &[f32], q: f64) -> f32 {
     if v.is_empty() {
         return 0.0;
     }
     let mut s = v.to_vec();
     s.sort_by(|a, b| a.total_cmp(b));
-    s[s.len() / 2]
+    s[((s.len() - 1) as f64 * q) as usize]
+}
+
+fn median(v: &[f32]) -> f32 {
+    percentile(v, 0.5)
 }
 
 /// Phase des battements : décalage qui aligne le mieux une grille de période
@@ -502,25 +506,32 @@ pub fn grid_samples(samples: &[f32], sr: u32, bpm_hint: Option<f64>) -> Result<G
 
     let (low, mid) = band_energies(&mono, dsr);
     let gfps = dsr / GRID_HOP as f64;
-    let mid_ref = median(&mid);
-    let low_ref = median(&low);
+    // Niveau « morceau plein » : 80e centile (les intros et outros pèsent peu).
+    let mid_ref = percentile(&mid, 0.8);
+    let low_ref = percentile(&low, 0.8);
     let per_beat = (beat * gfps).max(1.0) as usize;
     let beats_total = ((duration - offset) / beat) as usize;
     // Énergies moyennes par temps.
-    let per: Vec<(f32, f32)> = (0..beats_total)
+    // Trame d'énergie → temps : centre de la fenêtre FFT.
+    let half = FRAME as f64 / 2.0 / dsr;
+    let per: Vec<(f32, f32, f32)> = (0..beats_total)
         .map(|b| {
-            let start = ((offset + b as f64 * beat) * gfps) as usize;
+            let start = (((offset + b as f64 * beat - half).max(0.0)) * gfps) as usize;
             let end = (start + per_beat).min(mid.len());
             if start >= end {
-                return (0.0, 0.0);
+                return (0.0, 0.0, 0.0);
             }
             let k = (end - start) as f32;
-            (low[start..end].iter().sum::<f32>() / k, mid[start..end].iter().sum::<f32>() / k)
+            // Début du temps (premier quart) : sert à savoir si la musique a commencé.
+            let hend = (start + (per_beat / 4).max(1)).min(end);
+            let head = (start..hend).map(|i| low[i] + mid[i]).sum::<f32>() / (hend - start) as f32;
+            (low[start..end].iter().sum::<f32>() / k, mid[start..end].iter().sum::<f32>() / k, head)
         })
         .collect();
-    let loud = |b: usize| per[b].0 + per[b].1 > 0.08 * (low_ref + mid_ref);
-    let calm = |b: usize| per[b].1 <= 0.55 * mid_ref;
-    let has_beat = |b: usize| per[b].0 > 0.35 * low_ref;
+    let head_ref = median(&per.iter().map(|p| p.2).collect::<Vec<_>>());
+    let loud = |b: usize| per[b].2 > 0.05 * head_ref;
+    let calm = |b: usize| per[b].1 <= 0.3 * mid_ref;
+    let has_beat = |b: usize| per[b].0 > 0.25 * low_ref;
 
     // Premier temps où la musique commence.
     let first = (0..per.len()).find(|&b| loud(b)).unwrap_or(0);
@@ -666,5 +677,17 @@ mod grid_tests {
             eprintln!("bpm {bpm} first {first} -> {:.4} (err {:.1} ms)", g.offset, err * 1000.0);
             assert!(err < 0.010, "bpm {bpm}: offset {} au lieu de {first}", g.offset);
         }
+    }
+}
+
+#[cfg(test)]
+mod mp3_grid {
+    /// TF_GRID_MP3=chemin : affiche la grille calculée sur un vrai fichier.
+    #[test]
+    #[ignore]
+    fn print_grid() {
+        let p = std::env::var("TF_GRID_MP3").unwrap();
+        let g = super::grid(std::path::Path::new(&p), None).unwrap();
+        println!("GRID {g:?}");
     }
 }

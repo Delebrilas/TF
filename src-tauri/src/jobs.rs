@@ -624,6 +624,17 @@ async fn run<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, cancel: Arc<Notify>
     if let Some(j) = done {
         crate::desk::job_done(app, &j);
     }
+    // Grille, intro et outro pour l'onglet DJ (en tâche de fond).
+    if let Some(dj) = app.try_state::<crate::dj::Dj>() {
+        let path = final_path.display().to_string();
+        if dj.cached_grid(&path).is_none() {
+            let hint = bpm_value;
+            let p = final_path.clone();
+            if let Ok(Ok(g)) = tokio::task::spawn_blocking(move || bpm::grid(&p, hint)).await {
+                dj.store_grid(&path, &g);
+            }
+        }
+    }
     Ok(())
 }
 
