@@ -321,6 +321,16 @@ pub async fn search(tools: &Tools, query: &str) -> Vec<SearchResult> {
 
 // ---------- YouTube / SoundCloud ----------
 
+/// Lien SoundCloud « soundcloud.com/<artiste>/<titre> » → (artiste, titre) lisibles.
+pub fn sc_slug(url: &str) -> Option<(String, String)> {
+    let path = url.split("soundcloud.com/").nth(1)?.split(['?', '#']).next()?;
+    let mut it = path.split('/').filter(|p| !p.is_empty());
+    let (a, t) = (it.next()?, it.next()?);
+    let nice = |s: &str| s.replace(['-', '_'], " ").trim().to_string();
+    Some((nice(a), nice(t)))
+}
+
+
 async fn resolve_ytdlp(tools: &Tools, url: &str, src: Source) -> Result<Resolved> {
     let out = tools.ytdlp()
         .args(["--flat-playlist", "-J", "--no-playlist", "--no-warnings", url])

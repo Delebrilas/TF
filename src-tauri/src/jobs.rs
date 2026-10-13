@@ -369,9 +369,12 @@ async fn run<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, cancel: Arc<Notify>
         (PathBuf::from(job.path.clone().unwrap_or_default()), None)
     } else {
         let mut tools = tools::require(app)?;
+        // Sans titre (lien SoundCloud brut), on le lit dans le lien pour pouvoir
+        // chercher une autre version si SoundCloud refuse (DRM).
+        let slug = (job.source == Source::Soundcloud).then(|| sources::sc_slug(&job.url)).flatten();
         let meta = Meta {
-            title: job.title.clone(),
-            artist: job.artist.clone(),
+            title: job.title.clone().or_else(|| slug.as_ref().map(|s| s.1.clone())),
+            artist: job.artist.clone().or_else(|| slug.map(|s| s.0)),
             duration: job.duration,
             ..Default::default()
         };

@@ -107,18 +107,9 @@ fn merged(old: &[ExtTrack], fresh: Vec<ExtTrack>) -> Vec<ExtTrack> {
         .collect()
 }
 
-/// Lien SoundCloud « soundcloud.com/<artiste>/<titre> » → (artiste, titre) lisibles.
-fn sc_slug(url: &str) -> Option<(String, String)> {
-    let path = url.split("soundcloud.com/").nth(1)?.split(['?', '#']).next()?;
-    let mut it = path.split('/').filter(|p| !p.is_empty());
-    let (a, t) = (it.next()?, it.next()?);
-    let nice = |s: &str| s.replace(['-', '_'], " ").trim().to_string();
-    Some((nice(a), nice(t)))
-}
-
 fn ext_track(r: sources::TrackRequest, from: &str) -> Option<ExtTrack> {
     // SoundCloud renvoie parfois des likes sans titre ni artiste : on les lit dans le lien.
-    let slug = (r.source == sources::Source::Soundcloud).then(|| sc_slug(&r.url)).flatten();
+    let slug = (r.source == sources::Source::Soundcloud).then(|| sources::sc_slug(&r.url)).flatten();
     let title = r.meta.title.clone().filter(|t| !t.trim().is_empty()).or_else(|| slug.as_ref().map(|s| s.1.clone()))?;
     let artist = r.meta.artist.clone().filter(|a| !a.trim().is_empty()).or_else(|| slug.map(|s| s.0)).unwrap_or_default();
     let url = if r.url.is_empty() {
@@ -298,12 +289,27 @@ pub async fn preview(app: &AppHandle, t: &ExtTrack) -> Result<Vec<u8>, String> {
         Some(d) => d,
         None => {
             let tools = tools::locate(app).ok_or("yt-dlp n'est pas installé")?;
-            let target = if t.source == sources::Source::Soundcloud {
-                t.url.clone()
+            let search = format!("ytsearch1:{} {} audio", online::first_artist(&t.artist), t.title);
+            if t.source != sources::Source::Soundcloud {
+                excerpt(&tools, &search).await?
             } else {
-                format!("ytsearch1:{} {} audio", online::first_artist(&t.artist), t.title)
-            };
-            excerpt(&tools, &target).await?
+                match excerpt(&tools, &t.url).await {
+                    Ok(d) => d,
+                    // Titre protégé (DRM) ou retiré sur SoundCloud : Deezer, puis YouTube.
+                    Err(e) => {
+                        let mut alt = None;
+                        if let Some(url) = online::deezer_preview(&t.artist, &t.title, t.duration).await {
+                            if let Ok(r) = sources::http().get(&url).send().await {
+                                alt = r.bytes().await.ok().filter(|b| b.len() > 10_000).map(|b| b.to_vec());
+                            }
+                        }
+                        match alt {
+                            Some(d) => d,
+                            None => excerpt(&tools, &search).await.map_err(|_| e)?,
+                        }
+                    }
+                }
+            }
         }
     };
     let mut c = PREVIEWS.lock().unwrap();
