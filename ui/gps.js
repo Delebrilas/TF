@@ -235,7 +235,7 @@ if (typeof module !== "undefined") module.exports = GPS;
 
 if (typeof window !== "undefined" && window.djApi) (() => {
 const dj = window.djApi;
-const GPS_DEFAULTS = { useKey: true, useEnergy: true, useCurve: false, fill: false, minutes: 60, live: true, missing: true, autopilot: false, flExport: true };
+const GPS_DEFAULTS = { useKey: true, useEnergy: true, useCurve: false, fill: false, minutes: 60, live: true, missing: true, autopilot: false, flExport: true, curveSmooth: true, curveEdit: true, curveAxis: true, curveSnap: false };
 const load = (k, d) => {
   try {
     return { ...d, ...JSON.parse(localStorage.getItem(k) || "{}") };
@@ -550,6 +550,12 @@ function build() {
     <div class="gps-curve" id="gps-curve">
       <canvas id="gps-canvas"></canvas>
       <div class="muted small">Dessine la courbe de BPM du set à la souris (de gauche à droite = du début à la fin). <button type="button" class="link" id="gps-curve-clear">Effacer</button></div>
+      <div class="gps-curve-opts small">${[
+        ["curveSmooth", "Lisser", "Arrondit les pics et creux brusques quand tu lâches la souris"],
+        ["curveEdit", "Retouche", "Cliquer-glisser sur la courbe la tire en douceur au lieu de redessiner"],
+        ["curveAxis", "Axe du temps", "Minutes du set sous la courbe"],
+        ["curveSnap", "Paliers", "BPM aimanté par pas de 2 pour des plateaux nets"],
+      ].map(([k, l, h]) => `<label title="${h}"><input type="checkbox" data-c="${k}" /> ${l}</label>`).join("")}</div>
     </div>
     <div class="gps-actions">
       <button type="button" class="primary" id="gps-go">Calculer l'itinéraire</button>
@@ -628,6 +634,15 @@ function build() {
   $("#gps-launch").onclick = () => (gs.running ? ((gs.running = false), render()) : launch());
   $("#gps-trailer").onclick = playTrailer;
   $("#gps-fl").onclick = exportFl;
+  for (const cb of document.querySelectorAll("[data-c]")) {
+    cb.checked = !!gopt[cb.dataset.c];
+    cb.onchange = () => {
+      gopt[cb.dataset.c] = cb.checked;
+      save();
+      if (gs.curve && cb.checked && cb.dataset.c === "curveSnap") gs.curve = gs.curve.map(snapBpm), save();
+      drawCurve();
+    };
+  }
   $("#gps-curve-clear").onclick = () => {
     gs.curve = null;
     save();
@@ -888,15 +903,28 @@ function bpmRange() {
   const lo = b[Math.floor(b.length * 0.03)], hi = b[Math.floor(b.length * 0.97)];
   return [Math.floor((lo - 4) / 5) * 5, Math.ceil((hi + 4) / 5) * 5];
 }
+const AXIS_H = 14;
+const plotH = (c) => c.clientHeight - (gopt.curveAxis ? AXIS_H : 0);
+const snapBpm = (b) => (gopt.curveSnap ? Math.round(b / 2) * 2 : b);
+// Lissage : trois passes d'un noyau 1-2-1, extrémités gardées.
+function smoothCurve(v) {
+  let c = v.slice();
+  for (let p = 0; p < 3; p++) c = c.map((b, i) => (i === 0 || i === c.length - 1 ? b : (c[i - 1] + 2 * b + c[i + 1]) / 4));
+  return c.map((b) => snapBpm(Math.round(b * 10) / 10));
+}
 function initCanvas() {
   const c = $("#gps-canvas");
-  let drawing = false, lastI = null;
+  let drawing = false, lastI = null, pull = null;
   const at = (e) => {
     const r = c.getBoundingClientRect();
     const [lo, hi] = bpmRange();
-    const x = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
-    const y = Math.max(0, Math.min(1, (e.clientY - r.top) / r.height));
-    return { i: Math.round(x * (CURVE_N - 1)), bpm: Math.round((hi - (hi - lo) * y) * 10) / 10 };
+    const x = Math.max(0, Math.min(1, (e.clientX - r.left - 28) / (r.width - 28)));
+    const y = Math.max(0, Math.min(1, (e.clientY - r.top) / plotH(c)));
+    return { i: Math.round(x * (CURVE_N - 1)), bpm: Math.round((hi - (hi - lo) * y) * 10) / 10, py: e.clientY - r.top };
+  };
+  const yOf = (b) => {
+    const [lo, hi] = bpmRange();
+    return plotH(c) - ((b - lo) / (hi - lo)) * plotH(c);
   };
   const put = (e) => {
     const p = at(e);
@@ -904,27 +932,50 @@ function initCanvas() {
       const st = node(startTrack() || {});
       gs.curve = Array(CURVE_N).fill(st?.bpm || p.bpm);
     }
+    const v = snapBpm(p.bpm);
     if (lastI != null && lastI !== p.i) {
       const from = gs.curve[lastI], n = Math.abs(p.i - lastI);
-      for (let k = 1; k < n; k++) gs.curve[lastI + Math.sign(p.i - lastI) * k] = from + ((p.bpm - from) * k) / n;
+      for (let k = 1; k < n; k++) gs.curve[lastI + Math.sign(p.i - lastI) * k] = snapBpm(from + ((v - from) * k) / n);
     }
-    gs.curve[p.i] = p.bpm;
+    gs.curve[p.i] = v;
     lastI = p.i;
+    drawCurve();
+  };
+  // Retouche : la zone autour du clic suit la souris, en cloche (±4 points).
+  const drag = (e) => {
+    const d = at(e).bpm - pull.bpm;
+    gs.curve = pull.base.map((b, k) => snapBpm(Math.round((b + d * Math.exp(-((k - pull.i) ** 2) / 32)) * 10) / 10));
     drawCurve();
   };
   c.onpointerdown = (e) => {
     drawing = true;
     lastI = null;
+    pull = null;
     c.setPointerCapture(e.pointerId);
     if (!gopt.useCurve) {
       gopt.useCurve = true;
+      save();
       render();
+    }
+    const p = at(e);
+    if (gopt.curveEdit && gs.curve && Math.abs(yOf(gs.curve[p.i]) - p.py) <= 10) {
+      pull = { i: p.i, bpm: p.bpm, base: gs.curve.slice() };
+      c.style.cursor = "ns-resize";
+      return;
     }
     put(e);
   };
-  c.onpointermove = (e) => drawing && put(e);
+  c.onpointermove = (e) => {
+    if (drawing) return pull ? drag(e) : put(e);
+    if (!gopt.curveEdit || !gs.curve) return (c.style.cursor = "crosshair");
+    const p = at(e);
+    c.style.cursor = Math.abs(yOf(gs.curve[p.i]) - p.py) <= 10 ? "ns-resize" : "crosshair";
+  };
   c.onpointerup = () => {
+    if (drawing && !pull && gopt.curveSmooth && gs.curve) gs.curve = smoothCurve(gs.curve);
     drawing = false;
+    pull = null;
+    drawCurve();
     save();
   };
 }
@@ -936,7 +987,7 @@ function drawCurve() {
   c.height = c.clientHeight * dpr;
   const g = c.getContext("2d");
   g.scale(dpr, dpr);
-  const w = c.clientWidth, h = c.clientHeight;
+  const w = c.clientWidth, h = plotH(c);
   const cs = getComputedStyle(document.documentElement);
   const col = (n) => cs.getPropertyValue(n).trim();
   const [lo, hi] = bpmRange();
@@ -952,8 +1003,24 @@ function drawCurve() {
     g.stroke();
     g.fillText(String(b), 2, y(b) + 3);
   }
-  // Itinéraire calculé : BPM de chaque morceau à son heure de passage.
+  // Axe du temps : minutes du set (itinéraire calculé, sinon durée choisie).
   const r = gs.route;
+  if (gopt.curveAxis) {
+    const secs = r.length > 1 ? r[r.length - 1].t + r[r.length - 1].dur - r[0].t : gopt.fill ? gopt.minutes * 60 : 0;
+    const ty = c.clientHeight - 3;
+    if (secs > 0) {
+      const mins = secs / 60;
+      const step = [1, 2, 5, 10, 15, 20, 30, 60].find((s) => mins / s <= 8) || 120;
+      for (let m = 0; m <= mins + 1e-9; m += step) {
+        const px = 28 + (m / mins) * (w - 28);
+        g.fillText(m >= 60 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}` : `${m} min`, Math.min(px, w - 34), ty);
+      }
+    } else {
+      g.fillText("début", 30, ty);
+      g.fillText("fin", w - 18, ty);
+    }
+  }
+  // Itinéraire calculé : BPM de chaque morceau à son heure de passage.
   if (r.length > 1) {
     const t0 = r[0].t, tot = r[r.length - 1].t + r[r.length - 1].dur - t0;
     g.strokeStyle = col("--accent-2");
@@ -974,10 +1041,13 @@ function drawCurve() {
     g.lineWidth = 2.5;
     g.setLineDash(gopt.useCurve ? [] : [4, 4]);
     g.beginPath();
-    gs.curve.forEach((b, i) => {
-      const px = 28 + (i / (CURVE_N - 1)) * (w - 28);
-      i ? g.lineTo(px, y(b)) : g.moveTo(px, y(b));
-    });
+    const pts = gs.curve.map((b, i) => [28 + (i / (CURVE_N - 1)) * (w - 28), y(b)]);
+    g.moveTo(...pts[0]);
+    // Lissé : courbes passant par le milieu de chaque segment.
+    if (gopt.curveSmooth) {
+      for (let i = 1; i < pts.length - 1; i++) g.quadraticCurveTo(pts[i][0], pts[i][1], (pts[i][0] + pts[i + 1][0]) / 2, (pts[i][1] + pts[i + 1][1]) / 2);
+      g.lineTo(...pts[pts.length - 1]);
+    } else pts.slice(1).forEach((p) => g.lineTo(...p));
     g.stroke();
     g.setLineDash([]);
   } else {
