@@ -747,6 +747,7 @@ function renderLibrary() {
   rows.appendChild(frag);
   markPlaying();
   refreshSel();
+  window.ux?.afterLibrary();
 }
 $("#lib-search").addEventListener("input", renderLibrary);
 $("#lib-sort").addEventListener("change", () => {
@@ -1086,7 +1087,7 @@ function markPlaying() {
     const on = !!t && el.dataset.path === t.path;
     el.classList.toggle("playing", on);
     el.querySelector(".cover-play use").setAttribute("href", on && path ? "#i-pause" : "#i-play");
-  });
+  });  window.ux?.compat();
 }
 
 // ---------- Visualiseur ----------
@@ -1480,11 +1481,21 @@ $("#clip-dismiss").onclick = () => $("#clip-banner").classList.add("hidden");
 const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
 let theme = "system";
 try { theme = localStorage.getItem("tf-theme") || "system"; } catch {}
-const isDark = () => (theme === "system" ? darkQuery.matches : theme === "dark");
+const isDark = () => (theme === "system" ? darkQuery.matches : theme === "time" ? document.documentElement.dataset.theme === "dark" : theme === "dark");
+// Thème « Heure » : clair de 8 h à 19 h, sombre le soir, sombre et chaud (moins de bleu) de 22 h à 6 h.
+function timeTheme() {
+  const h = new Date().getHours();
+  return { mode: h >= 8 && h < 19 ? "light" : "dark", night: h >= 22 || h < 6 };
+}
 function applyTheme(t) {
   theme = t;
+  delete document.documentElement.dataset.night;
   if (t === "system") delete document.documentElement.dataset.theme;
-  else document.documentElement.dataset.theme = t;
+  else if (t === "time") {
+    const tt = timeTheme();
+    document.documentElement.dataset.theme = tt.mode;
+    if (tt.night) document.documentElement.dataset.night = "";
+  } else document.documentElement.dataset.theme = t;
   try { localStorage.setItem("tf-theme", t); } catch {}
   for (const b of $("#s-theme").children) b.classList.toggle("on", b.dataset.v === t);
   $("#btn-theme use").setAttribute("href", isDark() ? "#i-sun" : "#i-moon");
@@ -1495,6 +1506,7 @@ $("#s-theme").onclick = (e) => {
 };
 $("#btn-theme").onclick = () => applyTheme(isDark() ? "light" : "dark");
 darkQuery.addEventListener("change", () => applyTheme(theme));
+setInterval(() => theme === "time" && applyTheme("time"), 5 * 60 * 1000);
 applyTheme(theme);
 
 // ---------- Composants (yt-dlp, ffmpeg) ----------
@@ -2581,7 +2593,7 @@ setInterval(() => settings?.auto_update && checkUpdate(false), 6 * 3600 * 1000);
 
 // ---------- Sauvegarde et restauration ----------
 
-const UI_KEYS = ["tf-dj", "tf-gps", "tf-gps-opts", "tf-help-dj", "tf-theme", "tf-volume", "tf-viz", "tf-bpm", "tf-libmode", "tf-merge-ignored"];
+const UI_KEYS = ["tf-dj", "tf-gps", "tf-gps-opts", "tf-help-dj", "tf-theme", "tf-volume", "tf-viz", "tf-bpm", "tf-libmode", "tf-merge-ignored", "tf-ui"];
 $("#s-backup").onclick = async () => {
   const d = new Date();
   const name = `TrackFetcher-sauvegarde-${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}.json`;

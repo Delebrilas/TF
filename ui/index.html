@@ -311,6 +311,7 @@
           <button data-v="system">Système</button>
           <button data-v="light">Clair</button>
           <button data-v="dark">Sombre</button>
+          <button data-v="time" title="Clair le jour, sombre le soir, plus sombre et plus chaud la nuit">Heure</button>
         </div>
       </div>
 
@@ -428,6 +429,26 @@
       <div class="toggle">
         <button type="button" class="switch" role="switch" id="s-pulse"></button>
         <span><b>Pulsation au BPM</b><small>Le contour de la fenêtre bat au rythme du morceau.</small></span>
+      </div>
+
+      <div class="toggle">
+        <button type="button" class="switch" role="switch" data-ux="fx"></button>
+        <span><b>Animations et effets de verre</b><small>Transitions douces, flou derrière les menus et les fenêtres.</small></span>
+      </div>
+
+      <div class="toggle">
+        <button type="button" class="switch" role="switch" data-ux="hoverCard"></button>
+        <span><b>Fiche au survol</b><small>Passer sur un titre de la bibliothèque affiche pochette, BPM, clé, énergie et un aperçu ▶.</small></span>
+      </div>
+
+      <div class="toggle">
+        <button type="button" class="switch" role="switch" data-ux="compat"></button>
+        <span><b>Jauge de compatibilité</b><small>Dans la bibliothèque, chaque titre montre s'il s'enchaîne bien avec celui qui joue.</small></span>
+      </div>
+
+      <div class="toggle">
+        <button type="button" class="switch" role="switch" data-ux="eggs"></button>
+        <span><b>Surprises</b><small>Quelques secrets cachés dans l'app.</small></span>
       </div>
 
       <div class="toggle">
@@ -649,5 +670,6 @@
   <script src="main.js"></script>
   <script src="dj.js"></script>
   <script src="gps.js"></script>
+  <script src="ux.js"></script>
 </body>
 </html>

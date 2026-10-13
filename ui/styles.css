@@ -896,3 +896,89 @@ button.icon.sp { color: var(--spotify); }
 .gps-disc-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 5px 0; border-top: 1px solid var(--line); }
 .gps-disc-row .mp-meta small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
 .gps-disc-row .loading { opacity: .5; }
+
+/* ---------- Thème « Heure » : la nuit, plus sombre et plus chaud (moins de bleu) ---------- */
+:root[data-night] {
+  --bg: #0d0a08;
+  --bg-2: #14100c;
+  --card: #1a1510;
+  --card-hover: #211a14;
+  --line: #2b231b;
+  --text: #eee3d3;
+  --muted: #9a8c78;
+  --accent: #c58a5a;
+  --accent-2: #e2685b;
+  --info: #d0a060;
+}
+
+/* ---------- 388 : jauge de compatibilité ---------- */
+#lib-rows .lib-row { position: relative; }
+.l-compat {
+  position: absolute; left: 90px; bottom: 0; height: 3px; width: calc((100% - 104px) * var(--w) / 100);
+  background: hsl(calc(var(--h) * 1deg) 75% 55%); border-radius: 2px; opacity: .75; pointer-events: auto;
+  transition: width .35s ease, background .35s;
+}
+.l-compat.top { height: 3px; opacity: 1; box-shadow: 0 0 10px hsl(calc(var(--h) * 1deg) 80% 55% / .6); }
+
+/* ---------- 383 : fiche au survol ---------- */
+.hover-card {
+  position: fixed; z-index: 44; width: 330px; display: grid; grid-template-columns: 72px 1fr auto; gap: 12px; align-items: start;
+  padding: 12px; border-radius: 16px; background: var(--bg-2); border: 1px solid var(--line);
+  box-shadow: 0 22px 60px -18px rgba(0,0,0,.65); animation: card-in .16s ease-out;
+}
+@keyframes card-in { from { opacity: 0; transform: translateY(4px) scale(.98); } }
+.hc-art { position: relative; width: 72px; height: 72px; border-radius: 10px; overflow: hidden; background: var(--grad); display: grid; place-items: center; color: rgba(255,255,255,.85); }
+.hc-art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.hc-art img[hidden] { display: none; }
+.hc-body { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.hc-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hc-artist { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hc-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.hc-tag { font-size: 11px; padding: 1px 7px; border-radius: 99px; background: var(--card-hover); border: 1px solid var(--line); }
+.hc-tag.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+.hc-tag.en { color: var(--warn); }
+.hc-note { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.hc-note:empty { display: none; }
+.hc-play { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--grad); color: #fff; border: 0; cursor: pointer; }
+.hover-card.previewing .hc-play { animation: pulse-ring 1.2s infinite; }
+@keyframes pulse-ring { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent); } 100% { box-shadow: 0 0 0 12px transparent; } }
+
+/* ---------- Effets (interrupteur « Animations et effets de verre ») ---------- */
+body.fx .topbar, body.fx .player {
+  background: color-mix(in srgb, var(--bg-2) 72%, transparent);
+  backdrop-filter: blur(18px) saturate(1.6); -webkit-backdrop-filter: blur(18px) saturate(1.6);
+}
+body.fx .modal { backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+body.fx .modal-card, body.fx .drawer-panel, body.fx .ctx, body.fx .toast, body.fx .hover-card {
+  background: color-mix(in srgb, var(--bg-2) 78%, transparent);
+  backdrop-filter: blur(22px) saturate(1.7); -webkit-backdrop-filter: blur(22px) saturate(1.7);
+  box-shadow: 0 24px 70px -20px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.07);
+}
+body.fx .modal-card { animation: pop-in .22s cubic-bezier(.2,.9,.3,1.2); }
+body.fx .ctx { animation: pop-in .14s ease-out; transform-origin: top left; }
+@keyframes pop-in { from { opacity: 0; transform: scale(.96) translateY(6px); } }
+body.fx .view:not(.hidden) { animation: view-in .28s cubic-bezier(.2,.8,.2,1); }
+@keyframes view-in { from { opacity: 0; transform: translateY(8px); } }
+body.fx .tabs button { transition: color .2s, background .2s, transform .15s; }
+body.fx button:active:not(:disabled) { transform: scale(.97); }
+body.fx #lib-rows .lib-row { transition: background .15s; }
+body.fx .job, body.fx .tile { transition: transform .18s, box-shadow .18s, background .15s; }
+body.fx .brand span {
+  background: linear-gradient(90deg, var(--text), var(--accent), var(--accent-2), var(--text)); background-size: 300% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent; animation: shine 12s linear infinite;
+}
+@keyframes shine { to { background-position: 300% 0; } }
+body.fx .switch { transition: background .2s; }
+body.fx .switch::after { transition: transform .25s cubic-bezier(.3,1.4,.5,1); }
+body.fx .primary { background-size: 160% 160%; transition: background-position .4s, box-shadow .2s, transform .15s; }
+body.fx .primary:hover:not(:disabled) { background-position: 100% 0; box-shadow: 0 8px 24px -8px color-mix(in srgb, var(--accent) 70%, transparent); }
+
+/* ---------- Surprises ---------- */
+.rain { position: fixed; inset: 0; pointer-events: none; z-index: 60; overflow: hidden; }
+.rain span { position: absolute; top: -50px; animation: fall linear forwards; }
+@keyframes fall { to { transform: translateY(calc(100vh + 80px)) rotate(540deg); opacity: .8; } }
+body.disco { animation: disco 1.2s linear infinite; }
+@keyframes disco { to { filter: hue-rotate(360deg); } }
+.brand img.scratch { animation: scratch 1s cubic-bezier(.3,.7,.4,1); }
+@keyframes scratch { 25% { transform: rotate(-200deg); } 50% { transform: rotate(160deg); } 75% { transform: rotate(-90deg); } 100% { transform: rotate(720deg); } }
+@media (prefers-reduced-motion: reduce) { body.disco { animation: none; } }
