@@ -1,6 +1,6 @@
 [package]
 name = "trackfetcher"
-version = "0.9.2"
+version = "1.0.0"
 description = "Téléchargeur MP3 avec détection et vérification du BPM"
 edition = "2021"
 
