@@ -84,6 +84,9 @@ pub struct Job {
     /// Tonalité détectée (Camelot).
     #[serde(default)]
     pub key: Option<crate::key::Key>,
+    /// Réanalyse demandée depuis la bibliothèque : BPM et clé sont réécrits.
+    #[serde(default)]
+    pub reanalyze: bool,
     #[serde(skip)]
     not_before: Option<Instant>,
 }
@@ -191,6 +194,18 @@ pub fn enqueue<R: tauri::Runtime>(
     path: Option<String>,
     source_key: Option<String>,
 ) -> Job {
+    enqueue_with(app, source, url, meta, path, source_key, false)
+}
+
+fn enqueue_with<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    source: Source,
+    url: String,
+    meta: Meta,
+    path: Option<String>,
+    source_key: Option<String>,
+    reanalyze: bool,
+) -> Job {
     let st = state(app);
     let id = st.next_id.fetch_add(1, Ordering::SeqCst);
     let job = Job {
@@ -215,11 +230,18 @@ pub fn enqueue<R: tauri::Runtime>(
         existing_bpm: None,
         source_key,
         key: None,
+        reanalyze,
         not_before: None,
     };
     st.jobs.lock().unwrap().push(job.clone());
     emit(app, &job);
     job
+}
+
+/// (Ré)analyse BPM et clé d'un MP3 de la bibliothèque, en écrasant les tags.
+pub fn enqueue_reanalyze<R: tauri::Runtime>(app: &AppHandle<R>, path: String) -> Job {
+    let name = std::path::Path::new(&path).file_stem().and_then(|s| s.to_str()).map(String::from);
+    enqueue_with(app, Source::Local, String::new(), Meta { title: name, ..Default::default() }, Some(path), None, true)
 }
 
 /// Identifiants (source et artiste|titre) des pistes en file, hors erreurs.
@@ -569,10 +591,10 @@ async fn run<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, cancel: Arc<Notify>
     let detail = result.as_ref().map(describe);
     // Fichier local déjà tagué avec un autre BPM : on ne l'écrase pas.
     let existing = if is_local { tags::read_bpm(&file) } else { None };
-    let differs = matches!((existing, &result), (Some(old), Some(r)) if old.round() != r.bpm.round());
+    let differs = !job.reanalyze && matches!((existing, &result), (Some(old), Some(r)) if old.round() != r.bpm.round());
     let existing_bpm = if differs { existing } else { None };
     // Une clé déjà présente dans un fichier local est conservée.
-    let write_key = key.is_some() && !(is_local && tags::read_key(&file).is_some());
+    let write_key = key.is_some() && (job.reanalyze || !(is_local && tags::read_key(&file).is_some()));
     let data = TagData {
         title: if is_local { None } else { meta.title.clone() },
         artist: if is_local { None } else { meta.artist.clone() },

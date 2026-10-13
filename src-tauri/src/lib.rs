@@ -152,6 +152,17 @@ fn add_files(app: AppHandle, paths: Vec<String>) -> usize {
     n
 }
 
+/// Bouton « Réanalyser » de la bibliothèque : BPM et clé recalculés et réécrits.
+#[tauri::command]
+fn reanalyze(app: AppHandle, paths: Vec<String>) -> usize {
+    let n = paths.len();
+    for p in paths {
+        jobs::enqueue_reanalyze(&app, p);
+    }
+    jobs::pump(&app);
+    n
+}
+
 /// MP3 glissé dans la fenêtre : le navigateur n'en donne que le contenu,
 /// on l'enregistre dans le dossier de sortie avant de l'analyser.
 #[tauri::command]
@@ -660,6 +671,7 @@ pub fn run() {
             install_tools,
             add_url,
             add_files,
+            reanalyze,
             search,
             rename_artist,
             remove_job,

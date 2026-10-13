@@ -2014,6 +2014,7 @@ function renderSelBar() {
     if (list.length === 1) box.append(selAction("Dossier", "i-folder", () => T.opener.revealItemInDir(list[0].path)));
     const srcs = list.map((t) => t.source).filter(Boolean);
     if (srcs.length && srcs.length <= 5) box.append(selAction("Source", "i-external", () => srcs.forEach(openSource)));
+    box.append(selAction("Analyser BPM/clé", "i-sync", () => reanalyze(list)));
     box.append(selAction("Corbeille", "i-trash", () => trashPaths(list.map((t) => t.path)), "danger"));
   }
 }
@@ -2128,6 +2129,7 @@ function trackMenu(e, t, list, i) {
     return showCtx(e, [
       { label: `Lire les ${many.length} morceaux`, icon: "i-play", run: () => playList(many.map(libTrack), 0) },
       { label: `Exporter ${many.length} morceaux en CSV`, icon: "i-csv", run: () => exportCsv(many) },
+      { label: `Réanalyser BPM et clé (${many.length})`, icon: "i-sync", run: () => reanalyze(many) },
       "-",
       { label: `Mettre ${many.length} morceaux à la corbeille`, icon: "i-trash", danger: true, run: () => trashPaths(many.map((x) => x.path)) },
     ]);
@@ -2138,6 +2140,7 @@ function trackMenu(e, t, list, i) {
     { label: "Charger sur la platine A", icon: "i-cue", run: () => (showView("dj"), loadDeck("A", t)) },
     { label: "Charger sur la platine B", icon: "i-cue", run: () => (showView("dj"), loadDeck("B", t)) },
     { label: notes.get(t.path) ? "Modifier la note" : "Ajouter une note", icon: "i-pen", run: () => editNote(t) },
+    { label: t.bpm && t.key ? "Réanalyser BPM et clé" : "Analyser BPM et clé", icon: "i-sync", run: () => reanalyze([t]) },
     "-",
     { label: "Ouvrir le dossier", icon: "i-folder", run: () => T.opener.revealItemInDir(t.path) },
     t.source && { label: "Ouvrir la page d'origine", icon: "i-external", run: () => openSource(t.source) },
@@ -2146,6 +2149,37 @@ function trackMenu(e, t, list, i) {
     { label: "Mettre à la corbeille", icon: "i-trash", danger: true, run: () => trashPaths([t.path]) },
   ]);
 }
+
+// ---------- (Ré)analyse BPM et clé depuis la bibliothèque ----------
+const reanalyzing = new Set();
+async function reanalyze(tracks) {
+  const paths = tracks.map((t) => t.path).filter((p) => !reanalyzing.has(p));
+  if (!paths.length) return toast("Analyse déjà en cours");
+  paths.forEach((p) => reanalyzing.add(p));
+  try {
+    await invoke("reanalyze", { paths });
+    toast(paths.length > 1 ? `${paths.length} morceaux en cours d'analyse (BPM et clé)` : "Analyse du BPM et de la clé en cours");
+  } catch (e) {
+    paths.forEach((p) => reanalyzing.delete(p));
+    toast(String(e), true);
+  }
+}
+// Résultat d'une réanalyse : mis à jour tout de suite dans la bibliothèque.
+function reanalyzed(job) {
+  if (!job.path || !reanalyzing.has(job.path) || !["done", "error"].includes(job.status)) return;
+  reanalyzing.delete(job.path);
+  const t = library.find((x) => x.path === job.path);
+  if (t && job.status === "done") {
+    if (job.bpm) t.bpm = job.bpm.bpm;
+    if (job.key) t.key = job.key.camelot;
+    renderLibrary();
+  }
+}
+$("#lib-analyze").onclick = () => {
+  const list = sel.library.size ? selectedTracks() : filteredLibrary().filter((t) => !t.bpm || !t.key);
+  if (!list.length) return toast("Tous les morceaux affichés ont déjà un BPM et une clé. Sélectionne ceux à réanalyser.");
+  reanalyze(list);
+};
 
 // ---------- Compte Spotify ----------
 
@@ -2478,7 +2512,7 @@ document.addEventListener("keydown", (e) => e.key === "Escape" && $("#myplaylist
   updateCount();
   if (!snap.jobs.length) showView("library");
 
-  await listen("job", (e) => render(e.payload));
+  await listen("job", (e) => (render(e.payload), reanalyzed(e.payload)));
   await listen("job-removed", (e) => {
     jobs.delete(e.payload);
     document.getElementById("job-" + e.payload)?.remove();
