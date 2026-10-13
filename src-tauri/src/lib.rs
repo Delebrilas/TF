@@ -4,6 +4,7 @@ mod bpm;
 mod clipboard;
 mod desk;
 mod diag;
+mod flexport;
 mod dj;
 mod ext;
 mod history;
@@ -272,6 +273,37 @@ async fn beat_grid(dj: State<'_, dj::Dj>, path: String, bpm: Option<f64>) -> Cmd
     .map_err(err)?;
     dj.store_grid(&path, &g);
     Ok(g)
+}
+
+/// Export FL Studio de l'itinéraire du GPS : renvoie le dossier créé.
+#[tauri::command]
+async fn gps_export_fl(app: AppHandle, paths: Vec<String>, bars: Option<u32>) -> CmdResult<String> {
+    let tools = tools::require(&app).map_err(err)?;
+    let out_dir = app.state::<AppState>().settings.lock().unwrap().output_dir.clone();
+    let mut tracks = Vec::new();
+    for p in paths {
+        let cached = app.state::<dj::Dj>().cached_grid(&p);
+        let g = match cached {
+            Some(g) => g,
+            None => {
+                let q = p.clone();
+                let g = tauri::async_runtime::spawn_blocking(move || bpm::grid(std::path::Path::new(&q), None))
+                    .await
+                    .map_err(err)?
+                    .map_err(|e| format!("{p} : {e}"))?;
+                app.state::<dj::Dj>().store_grid(&p, &g);
+                g
+            }
+        };
+        tracks.push((p, g));
+    }
+    let a = app.clone();
+    let dir = flexport::export(&tools, std::path::Path::new(&out_dir), tracks, bars, move |i, n| {
+        let _ = a.emit("fl-export", (i, n));
+    })
+    .await
+    .map_err(err)?;
+    Ok(dir.to_string_lossy().into_owned())
 }
 
 /// Grilles déjà calculées (pour afficher les intros DJ dans la bibliothèque).
@@ -653,6 +685,7 @@ pub fn run() {
             apply_bpm,
             save_settings,
             beat_grid,
+            gps_export_fl,
             cached_grids,
             notes_get,
             note_set,

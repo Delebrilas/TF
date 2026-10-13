@@ -235,7 +235,7 @@ if (typeof module !== "undefined") module.exports = GPS;
 
 if (typeof window !== "undefined" && window.djApi) (() => {
 const dj = window.djApi;
-const GPS_DEFAULTS = { useKey: true, useEnergy: true, useCurve: false, fill: false, minutes: 60, live: true, missing: true, autopilot: false };
+const GPS_DEFAULTS = { useKey: true, useEnergy: true, useCurve: false, fill: false, minutes: 60, live: true, missing: true, autopilot: false, flExport: true };
 const load = (k, d) => {
   try {
     return { ...d, ...JSON.parse(localStorage.getItem(k) || "{}") };
@@ -454,6 +454,33 @@ async function loadExt() {
     ext = (await invoke("ext_tracks")) || [];
   } catch {}
 }
+// Export FL Studio (348) : un FLAC par morceau, précédé du silence qui le cale.
+let flBusy = "";
+let flListening = false;
+async function exportFl() {
+  if (gs.route.length < 2 || flBusy) return;
+  if (!flListening) {
+    flListening = true;
+    await listen("fl-export", (e) => {
+      const [i, n] = e.payload;
+      if (flBusy) (flBusy = `Export ${i + 1}/${n}…`), render();
+    });
+  }
+  flBusy = "Analyse…";
+  render();
+  try {
+    const bars = dj.opts().bars;
+    const dir = await invoke("gps_export_fl", { paths: gs.route.map((r) => r.path), bars: bars === "auto" ? null : Number(bars) });
+    toast("Export prêt : glisse tous les fichiers ensemble dans la Playlist de FL, mesure 1 (voir LISEZ-MOI)");
+    Promise.resolve(T.opener.openPath(dir)).catch(() => {});
+  } catch (e) {
+    toast(String(e), true);
+  } finally {
+    flBusy = "";
+    render();
+  }
+}
+
 let extListening = false;
 async function refreshExt() {
   if (!extListening) {
@@ -495,6 +522,7 @@ const OPTS = [
   ["live", "Recalcul en direct", "Si tu joues un morceau hors itinéraire, la route repart de lui."],
   ["missing", "Maillons manquants", "Propose des titres de tes likes pour les transitions difficiles."],
   ["autopilot", "Pilote auto", "Une fois lancé, enchaîne tout seul l'itinéraire avec les styles de transition."],
+  ["flExport", "Export FL Studio", "Bouton qui prépare l'itinéraire pour la Playlist de FL, chaque morceau calé au point de transition."],
 ];
 
 let built = false;
@@ -527,6 +555,7 @@ function build() {
       <button type="button" class="primary" id="gps-go">Calculer l'itinéraire</button>
       <button type="button" class="ghost" id="gps-launch">Lancer le set</button>
       <button type="button" class="ghost" id="gps-trailer">Bande-annonce</button>
+      <button type="button" class="ghost" id="gps-fl">Export FL Studio</button>
       <span class="muted small" id="gps-summary"></span>
     </div>
     <ul class="gps-route" id="gps-route"></ul>
@@ -598,6 +627,7 @@ function build() {
   };
   $("#gps-launch").onclick = () => (gs.running ? ((gs.running = false), render()) : launch());
   $("#gps-trailer").onclick = playTrailer;
+  $("#gps-fl").onclick = exportFl;
   $("#gps-curve-clear").onclick = () => {
     gs.curve = null;
     save();
@@ -695,6 +725,9 @@ function render() {
   $("#gps-launch").disabled = !gs.route.length && !trailer;
   $("#gps-trailer").textContent = trailer ? `Arrêter (${trailer.i + 1}/${gs.route.length - 1})` : "Bande-annonce";
   $("#gps-trailer").disabled = gs.route.length < 2;
+  $("#gps-fl").classList.toggle("hidden", !gopt.flExport);
+  $("#gps-fl").disabled = gs.route.length < 2 || !!flBusy;
+  $("#gps-fl").textContent = flBusy || "Export FL Studio";
   renderRoute();
   renderExt();
   drawCurve();
