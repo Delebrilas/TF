@@ -890,3 +890,9 @@ button.icon.sp { color: var(--spotify); }
 .hp-page li { margin-bottom: 6px; }
 .gps-curve-opts { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 4px; color: var(--muted); }
 .gps-curve-opts label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.gps-disc { margin-top: 12px; }
+.gps-disc-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.gps-disc ul { list-style: none; margin: 6px 0 0; padding: 0; }
+.gps-disc-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 5px 0; border-top: 1px solid var(--line); }
+.gps-disc-row .mp-meta small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+.gps-disc-row .loading { opacity: .5; }

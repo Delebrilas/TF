@@ -235,7 +235,7 @@ if (typeof module !== "undefined") module.exports = GPS;
 
 if (typeof window !== "undefined" && window.djApi) (() => {
 const dj = window.djApi;
-const GPS_DEFAULTS = { useKey: true, useEnergy: true, useCurve: false, fill: false, minutes: 60, live: true, missing: true, autopilot: false, flExport: true, curveSmooth: true, curveEdit: true, curveAxis: true, curveSnap: false };
+const GPS_DEFAULTS = { useKey: true, useEnergy: true, useCurve: false, fill: false, minutes: 60, live: true, missing: true, autopilot: false, flExport: true, curveSmooth: true, curveEdit: true, curveAxis: true, curveSnap: false, discover: true };
 const load = (k, d) => {
   try {
     return { ...d, ...JSON.parse(localStorage.getItem(k) || "{}") };
@@ -481,6 +481,108 @@ async function exportFl() {
   }
 }
 
+// ---------- Découvertes : hors bibliothèque, likes et playlists ----------
+let disc = { list: [], busy: false, error: "" };
+let discAudio = null, discPlaying = null;
+function routeBpms() {
+  let ref = gs.route[0]?.node?.bpm || 120;
+  return gs.route.map((x) => (ref = GPS.nearBpm(x.node?.bpm || ref, ref)));
+}
+async function findDisc() {
+  if (gs.route.length < 2 || disc.busy) return;
+  const count = new Map();
+  for (const r of gs.route) {
+    const a = byPath(r.path)?.artist;
+    if (a) count.set(a, (count.get(a) || 0) + 1);
+  }
+  const seeds = [...count].sort((a, b) => b[1] - a[1]).map((x) => x[0]).slice(0, 5);
+  if (!seeds.length) return toast("Les morceaux de l'itinéraire n'ont pas d'artiste", true);
+  const b = routeBpms();
+  disc = { list: [], busy: true, error: "" };
+  renderDisc();
+  try {
+    const found = await invoke("discover", { seeds, lo: Math.min(...b) * 0.98, hi: Math.max(...b) * 1.02 });
+    const owned = new Set([...library, ...ext].map((t) => normT(`${t.artist || ""} ${t.title || ""}`)));
+    disc.list = found.filter((x) => !owned.has(normT(`${x.artist} ${x.title}`)));
+    if (!disc.list.length) disc.error = "Tout ce que Deezer propose est déjà chez toi.";
+  } catch (e) {
+    disc.error = String(e);
+  }
+  disc.busy = false;
+  renderDisc();
+}
+// Place conseillée : entre les deux morceaux de l'itinéraire dont le BPM l'encadre le mieux.
+function discSlot(x) {
+  const b = routeBpms();
+  let best = 0, cost = Infinity;
+  for (let i = 0; i < b.length - 1; i++) {
+    const c = Math.abs(GPS.gapOf(x.bpm, b[i])) + Math.abs(GPS.gapOf(x.bpm, b[i + 1]));
+    if (c < cost) (cost = c), (best = i);
+  }
+  return best;
+}
+function stopDisc() {
+  if (discAudio) discAudio.pause(), URL.revokeObjectURL(discAudio.src);
+  discAudio = null;
+  discPlaying = null;
+}
+async function playDisc(x, btn) {
+  const same = discPlaying === x.id;
+  stopDisc();
+  renderDisc();
+  if (same) return;
+  discPlaying = x.id;
+  btn.classList.add("loading");
+  try {
+    const bytes = await invoke("like_preview", { track: x });
+    if (discPlaying !== x.id) return;
+    discAudio = new Audio(URL.createObjectURL(new Blob([bytes], { type: "audio/mpeg" })));
+    discAudio.onended = () => (stopDisc(), renderDisc());
+    await discAudio.play();
+  } catch (e) {
+    discPlaying = null;
+    toast(String(e), true);
+  }
+  renderDisc();
+}
+function renderDisc() {
+  const el = $("#gps-disc");
+  if (!el) return;
+  el.classList.toggle("hidden", !gopt.discover || gs.route.length < 2);
+  if (!gopt.discover || gs.route.length < 2) return el.replaceChildren();
+  el.innerHTML = `<div class="gps-disc-head"><b>Découvertes</b> <span class="muted small"></span> <button type="button" class="ghost small"></button></div><ul></ul>`;
+  const btn = el.querySelector("button");
+  btn.textContent = disc.busy ? "Recherche…" : disc.list.length ? "Autres idées" : "Chercher des titres à découvrir";
+  btn.disabled = disc.busy;
+  btn.onclick = findDisc;
+  el.querySelector(".muted").textContent = disc.error || (disc.list.length ? `${disc.list.length} titre${disc.list.length > 1 ? "s" : ""} hors de ta bibliothèque, tes likes et tes playlists` : "Artistes proches de ceux de l'itinéraire, au même tempo");
+  const ul = el.querySelector("ul");
+  for (const x of disc.list) {
+    const i = discSlot(x);
+    const a = byPath(gs.route[i].path), b2 = byPath(gs.route[i + 1].path);
+    const li = document.createElement("li");
+    li.className = "gps-disc-row";
+    li.innerHTML = `<button type="button" class="icon sm" title="Écouter un extrait (30 s)"><svg><use href="#i-${discPlaying === x.id ? "pause" : "play"}"/></svg></button>
+      <span class="mp-meta"><b></b><small></small></span>
+      <button type="button" class="ghost small"><svg><use href="#i-arrow"/></svg><span>Télécharger</span></button>`;
+    li.querySelector("b").textContent = `${x.artist} – ${x.title}`;
+    li.querySelector("small").textContent = `${Math.round(x.bpm)} BPM · entre « ${a?.title || "?"} » et « ${b2?.title || "?"} » · ${x.from}`;
+    const [play, dl] = li.querySelectorAll("button");
+    play.onclick = () => playDisc(x, play);
+    dl.onclick = async () => {
+      dl.disabled = true;
+      try {
+        const r = await invoke("likes_download", { tracks: [x] });
+        toast(r.added ? "Ajouté à la file : recalcule l'itinéraire une fois téléchargé" : "Déjà téléchargé");
+      } catch (e) {
+        toast(String(e), true);
+        dl.disabled = false;
+      }
+    };
+    ul.append(li);
+  }
+}
+
 let extListening = false;
 async function refreshExt() {
   if (!extListening) {
@@ -522,6 +624,7 @@ const OPTS = [
   ["live", "Recalcul en direct", "Si tu joues un morceau hors itinéraire, la route repart de lui."],
   ["missing", "Maillons manquants", "Propose des titres de tes likes pour les transitions difficiles."],
   ["autopilot", "Pilote auto", "Une fois lancé, enchaîne tout seul l'itinéraire avec les styles de transition."],
+  ["discover", "Découvertes", "Propose des titres hors de tes likes et playlists : artistes proches de ceux de l'itinéraire, au bon BPM (Deezer)."],
   ["flExport", "Export FL Studio", "Bouton qui prépare l'itinéraire pour la Playlist de FL, chaque morceau calé au point de transition."],
 ];
 
@@ -566,6 +669,7 @@ function build() {
     </div>
     <ul class="gps-route" id="gps-route"></ul>
     <div class="gps-ext muted small" id="gps-ext"></div>
+    <div class="gps-disc" id="gps-disc"></div>
     <div class="gps-picker hidden" id="gps-picker"><div class="gps-picker-box">
       <div class="gps-picker-head"><b id="gps-picker-title"></b><button type="button" class="icon sm" id="gps-picker-close"><svg><use href="#i-x"/></svg></button></div>
       <label class="search"><svg><use href="#i-search"/></svg><input type="text" id="gps-picker-q" placeholder="Titre, artiste, BPM…"></label>
@@ -745,6 +849,7 @@ function render() {
   $("#gps-fl").textContent = flBusy || "Export FL Studio";
   renderRoute();
   renderExt();
+  renderDisc();
   drawCurve();
 }
 

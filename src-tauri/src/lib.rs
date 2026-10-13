@@ -152,6 +152,32 @@ fn add_files(app: AppHandle, paths: Vec<String>) -> usize {
     n
 }
 
+/// Découvertes du GPS : titres d'artistes proches, au BPM compatible (Deezer).
+#[tauri::command]
+async fn discover(seeds: Vec<String>, lo: f64, hi: f64) -> CmdResult<Vec<ext::ExtTrack>> {
+    let found = online::discover(&seeds, lo, hi, 24).await;
+    if found.is_empty() {
+        return Err("Deezer n'a rien trouvé de compatible (ou ne répond pas)".into());
+    }
+    Ok(found
+        .into_iter()
+        .map(|f| ext::ExtTrack {
+            id: format!("deezer:{}", f.id),
+            source: Source::Other,
+            url: f.link,
+            artist: f.artist,
+            title: f.title,
+            duration: f.duration,
+            bpm: Some(f.bpm),
+            key: None,
+            looked: true,
+            from: format!("Découverte (proche de {})", f.via),
+            album: None,
+            cover: f.cover,
+        })
+        .collect())
+}
+
 /// Bouton « Réanalyser » de la bibliothèque : BPM et clé recalculés et réécrits.
 #[tauri::command]
 fn reanalyze(app: AppHandle, paths: Vec<String>) -> usize {
@@ -672,6 +698,7 @@ pub fn run() {
             add_url,
             add_files,
             reanalyze,
+            discover,
             search,
             rename_artist,
             remove_job,

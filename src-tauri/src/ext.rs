@@ -141,7 +141,7 @@ impl ExtTrack {
         sources::TrackRequest {
             source: self.source,
             // Spotify : pas de lien direct, l'audio est cherché d'après les métadonnées.
-            url: if self.source == sources::Source::Spotify { String::new() } else { self.url.clone() },
+            url: if self.source == sources::Source::Spotify || self.url.contains("deezer.com") { String::new() } else { self.url.clone() },
             key: self.id.clone(),
             meta: sources::Meta {
                 title: Some(self.title.clone()),

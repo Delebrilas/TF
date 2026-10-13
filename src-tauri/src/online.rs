@@ -165,6 +165,95 @@ pub async fn itunes(artist: &str, title: &str, duration: Option<f64>) -> Option<
     })
 }
 
+/// Titre trouvé sur Deezer hors de la bibliothèque (découvertes du GPS).
+#[derive(Debug, Clone, Serialize)]
+pub struct Found {
+    pub id: u64,
+    pub artist: String,
+    pub title: String,
+    pub duration: Option<f64>,
+    pub bpm: f64,
+    pub cover: Option<String>,
+    pub link: String,
+    /// Artiste de départ qui a mené à ce titre.
+    pub via: String,
+}
+
+async fn deezer_json(path: &str) -> Option<Value> {
+    let v: Value = http().get(format!("https://api.deezer.com/{path}")).send().await.ok()?.json().await.ok()?;
+    v.get("error").is_none().then_some(v)
+}
+
+/// Découvertes : artistes proches (Deezer « related ») de ceux de l'itinéraire,
+/// puis leurs titres dont le BPM tombe entre `lo` et `hi`.
+pub async fn discover(seeds: &[String], lo: f64, hi: f64, max: usize) -> Vec<Found> {
+    use futures_util::{stream, StreamExt};
+    // 1. Artistes proches, en alternant entre les artistes de départ.
+    let mut related: Vec<Vec<(u64, String, String)>> = Vec::new();
+    for seed in seeds.iter().take(5) {
+        let q = urlencoding::encode(first_artist(seed).trim()).into_owned();
+        let Some(id) = deezer_json(&format!("search/artist?q={q}&limit=1")).await.and_then(|v| v["data"][0]["id"].as_u64()) else { continue };
+        let Some(v) = deezer_json(&format!("artist/{id}/related?limit=8")).await else { continue };
+        let list = v["data"].as_array().cloned().unwrap_or_default();
+        related.push(list.iter().filter_map(|a| Some((a["id"].as_u64()?, a["name"].as_str()?.to_string(), seed.clone()))).collect());
+    }
+    let mut artists = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for i in 0..8 {
+        for r in &related {
+            if let Some(a) = r.get(i) {
+                if seen.insert(a.0) {
+                    artists.push(a.clone());
+                }
+            }
+        }
+    }
+    artists.truncate(16);
+    // 2. Titres de chacun dans la plage de BPM (Deezer filtre côté serveur), puis BPM exact.
+    let per_artist: Vec<Vec<Found>> = stream::iter(artists)
+        .map(|(_, name, via)| async move {
+            let q = format!("artist:\"{name}\" bpm_min:\"{}\" bpm_max:\"{}\"", lo.floor(), hi.ceil());
+            let Some(v) = deezer_json(&format!("search?q={}&limit=6", urlencoding::encode(&q))).await else { return vec![] };
+            let mut out = Vec::new();
+            for t in v["data"].as_array().cloned().unwrap_or_default().iter().take(4) {
+                let Some(id) = t["id"].as_u64() else { continue };
+                let Some(full) = deezer_json(&format!("track/{id}")).await else { continue };
+                let Some(bpm) = full["bpm"].as_f64().filter(|b| *b >= lo && *b <= hi) else { continue };
+                out.push(Found {
+                    id,
+                    artist: t.pointer("/artist/name").and_then(Value::as_str).unwrap_or(&name).to_string(),
+                    title: t["title"].as_str().unwrap_or("").to_string(),
+                    duration: t["duration"].as_f64(),
+                    bpm,
+                    cover: t.pointer("/album/cover_medium").and_then(Value::as_str).map(String::from),
+                    link: t["link"].as_str().map(String::from).unwrap_or_else(|| format!("https://www.deezer.com/track/{id}")),
+                    via: via.clone(),
+                });
+                if out.len() >= 2 {
+                    break;
+                }
+            }
+            out
+        })
+        .buffered(3)
+        .collect()
+        .await;
+    // Un ou deux titres par artiste, en alternant pour varier.
+    let mut found = Vec::new();
+    let mut titles = std::collections::HashSet::new();
+    for i in 0..2 {
+        for list in &per_artist {
+            if let Some(f) = list.get(i) {
+                if titles.insert(normalize(&format!("{} {}", f.artist, base_title(&f.title)))) {
+                    found.push(f.clone());
+                }
+            }
+        }
+    }
+    found.truncate(max);
+    found
+}
+
 /// GetSongBPM (clé gratuite sur getsongbpm.com/api).
 pub async fn getsongbpm(key: &str, artist: &str, title: &str) -> Option<f64> {
     getsongbpm_info(key, artist, title).await.and_then(|(bpm, _)| bpm)
@@ -277,6 +366,16 @@ fn round(b: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[ignore]
+    async fn net_discover_reply() {
+        let f = discover(&["Daft Punk".into(), "Justice".into()], 115.0, 130.0, 12).await;
+        for x in &f {
+            println!("search découverte: {} - {} ({} BPM, via {})", x.artist, x.title, x.bpm, x.via);
+        }
+        println!("search découvertes: {}", f.len());
+    }
 
     #[tokio::test]
     #[ignore]

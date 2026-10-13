@@ -382,6 +382,11 @@ fn set_status<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, s: Status) -> Resu
 
 // ---------- Traitement d'une piste ----------
 
+/// Piste sans lien (Spotify, découverte Deezer) : l'audio est cherché d'après titre et artiste.
+fn by_meta(job: &Job) -> bool {
+    job.url.is_empty() && job.source != Source::Local
+}
+
 async fn run<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, cancel: Arc<Notify>) -> Result<()> {
     let job = alive(app, id)?;
     let settings = state(app).settings.lock().unwrap().clone();
@@ -405,13 +410,13 @@ async fn run<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, cancel: Arc<Notify>
         // du même morceau sur YouTube, puis SoundCloud.
         let mut tried: Vec<String> = Vec::new();
         let mut queue: Vec<String> = Vec::new();
-        if job.source == Source::Spotify && job.url.is_empty() {
+        if by_meta(&job) {
             set_status(app, id, Status::Searching)?;
             queue = sources::find_matches(&tools, &meta, "ytsearch8").await.unwrap_or_default();
         } else {
             queue.push(job.url.clone());
         }
-        let mut searched_yt = job.source == Source::Spotify;
+        let mut searched_yt = job.source == Source::Spotify || by_meta(&job);
         let mut searched_sc = false;
         let mut last_err: Option<anyhow::Error> = None;
         let mut result = None;
@@ -477,7 +482,7 @@ async fn run<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, cancel: Arc<Notify>
     };
     if let Some(info) = &info {
         let m = sources::meta_from_info(info);
-        if job.source != Source::Spotify {
+        if job.source != Source::Spotify && !by_meta(&job) {
             meta.title = m.title.or(meta.title);
             meta.artist = m.artist.or(meta.artist);
         }
@@ -571,7 +576,7 @@ async fn run<R: tauri::Runtime>(app: &AppHandle<R>, id: u64, cancel: Arc<Notify>
         None
     } else if settings.hd_cover && hd_cover.is_some() {
         hd_cover.clone()
-    } else if job.source == Source::Spotify {
+    } else if job.source == Source::Spotify || by_meta(&job) {
         meta.cover.clone().or(hd_cover.clone())
     } else {
         None // garde la miniature intégrée par yt-dlp
