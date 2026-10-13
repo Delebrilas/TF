@@ -2327,7 +2327,10 @@ function renderLikes(status = "", isErr = false) {
   if (!rows.length) {
     const li = document.createElement("li");
     li.className = "muted lk-empty";
-    li.textContent = likes.length ? "Aucun titre ne correspond." : status ? "" : likesFrom === "likes" ? "Aucun like trouvé." : "Playlist vide.";
+    const noSc = likesFrom === "likes" && likesSrc === "soundcloud" && !(settings?.soundcloud_user || "").trim();
+    li.textContent = noSc
+      ? "Indique ton profil SoundCloud dans Réglages › Profil SoundCloud pour voir tes likes."
+      : likes.length ? "Aucun titre ne correspond." : status ? "" : likesFrom === "likes" ? "Aucun like trouvé." : "Playlist vide.";
     ul.append(li);
   }
   const frag = document.createDocumentFragment();

@@ -107,8 +107,20 @@ fn merged(old: &[ExtTrack], fresh: Vec<ExtTrack>) -> Vec<ExtTrack> {
         .collect()
 }
 
+/// Lien SoundCloud « soundcloud.com/<artiste>/<titre> » → (artiste, titre) lisibles.
+fn sc_slug(url: &str) -> Option<(String, String)> {
+    let path = url.split("soundcloud.com/").nth(1)?.split(['?', '#']).next()?;
+    let mut it = path.split('/').filter(|p| !p.is_empty());
+    let (a, t) = (it.next()?, it.next()?);
+    let nice = |s: &str| s.replace(['-', '_'], " ").trim().to_string();
+    Some((nice(a), nice(t)))
+}
+
 fn ext_track(r: sources::TrackRequest, from: &str) -> Option<ExtTrack> {
-    let title = r.meta.title.clone()?;
+    // SoundCloud renvoie parfois des likes sans titre ni artiste : on les lit dans le lien.
+    let slug = (r.source == sources::Source::Soundcloud).then(|| sc_slug(&r.url)).flatten();
+    let title = r.meta.title.clone().filter(|t| !t.trim().is_empty()).or_else(|| slug.as_ref().map(|s| s.1.clone()))?;
+    let artist = r.meta.artist.clone().filter(|a| !a.trim().is_empty()).or_else(|| slug.map(|s| s.0)).unwrap_or_default();
     let url = if r.url.is_empty() {
         // Spotify : spotify:track:<id> → lien web.
         let id = r.key.strip_prefix("spotify:track:")?;
@@ -120,7 +132,7 @@ fn ext_track(r: sources::TrackRequest, from: &str) -> Option<ExtTrack> {
         id: r.key,
         source: r.source,
         url,
-        artist: r.meta.artist.unwrap_or_default(),
+        artist,
         title,
         duration: r.meta.duration,
         bpm: None,
@@ -178,8 +190,14 @@ pub async fn likes(app: &AppHandle) -> Result<Likes, String> {
     if let Some(url) = sc {
         match tools::locate(app) {
             Some(t) => match sources::resolve(&t, &url).await {
-                Ok(r) => tracks.extend(r.tracks.into_iter().filter_map(|t| ext_track(t, SOUNDCLOUD_LIKES))),
-                Err(e) => errors.push(format!("SoundCloud : {e}")),
+                Ok(r) => {
+                    let before = tracks.len();
+                    tracks.extend(r.tracks.into_iter().filter_map(|t| ext_track(t, SOUNDCLOUD_LIKES)));
+                    if tracks.len() == before {
+                        errors.push(format!("SoundCloud : aucun like trouvé sur {url} (vérifie le nom du profil et que tes likes sont publics)"));
+                    }
+                }
+                Err(e) => errors.push(format!("SoundCloud : {}", crate::jobs::friendly(&e.to_string()))),
             },
             None => errors.push("SoundCloud : yt-dlp n'est pas installé".into()),
         }
@@ -501,6 +519,18 @@ mod tests {
         let mp3 = tokio::runtime::Runtime::new().unwrap().block_on(excerpt(&t, &url)).unwrap();
         // 30 s à 128 kb/s ≈ 480 Ko.
         assert!((400_000..560_000).contains(&mp3.len()), "{}", mp3.len());
+    }
+
+    #[test]
+    fn soundcloud_slug_fallback() {
+        let r = sources::TrackRequest {
+            source: sources::Source::Soundcloud,
+            url: "https://soundcloud.com/dj-louis/acid_loop-2?in=x".into(),
+            key: "1".into(),
+            meta: Default::default(),
+        };
+        let t = ext_track(r, SOUNDCLOUD_LIKES).unwrap();
+        assert_eq!((t.artist.as_str(), t.title.as_str()), ("dj louis", "acid loop 2"));
     }
 
     #[test]
