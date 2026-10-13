@@ -110,9 +110,10 @@ pub async fn run(app: &AppHandle) -> Vec<Check> {
         if gsb.trim().is_empty() {
             return Err(None);
         }
-        match online::getsongbpm_info(&gsb, "Daft Punk", "One More Time").await {
-            Some((Some(b), k)) => Ok(format!("{b} BPM{}", k.map(|k| format!(", {k}")).unwrap_or_default())),
-            _ => Err(Some("clé refusée ou titre introuvable".into())),
+        match online::getsongbpm_query(&gsb, "Daft Punk", "One More Time").await {
+            Ok((Some(b), k)) => Ok(format!("{b} BPM{}", k.map(|k| format!(", {k}")).unwrap_or_default())),
+            Ok((None, _)) => Err(Some("titre trouvé, mais sans BPM".into())),
+            Err(e) => Err(Some(e)),
         }
     }).await);
     v

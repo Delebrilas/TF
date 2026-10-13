@@ -175,18 +175,37 @@ pub async fn getsongbpm_info(key: &str, artist: &str, title: &str) -> Option<(Op
     if key.trim().is_empty() {
         return None;
     }
-    let a = first_artist(artist);
-    let t = base_title(title);
+    getsongbpm_query(key, artist, title).await.ok()
+}
+
+/// Comme `getsongbpm_info`, mais dit pourquoi ça échoue (pour « Tester mes sources »).
+pub async fn getsongbpm_query(key: &str, artist: &str, title: &str) -> Result<(Option<f64>, Option<String>), String> {
+    let (a, t) = (first_artist(artist), base_title(title));
     let url = format!(
         "https://api.getsong.co/search/?api_key={}&type=both&lookup={}",
         urlencoding::encode(key.trim()),
         urlencoding::encode(&format!("song:{t} artist:{a}"))
     );
-    let v: Value = http().get(url).send().await.ok()?.json().await.ok()?;
-    let s = v["search"].as_array()?.iter().find(|s| {
-        similar(s["title"].as_str().unwrap_or(""), &t) && similar(s.pointer("/artist/name").and_then(Value::as_str).unwrap_or(""), &a)
+    let r = http().get(url).send().await.map_err(|e| format!("pas de réponse ({e})"))?;
+    let code = r.status();
+    let body = r.text().await.unwrap_or_default();
+    let v: Value = serde_json::from_str(&body).map_err(|_| {
+        let snippet: String = body.chars().filter(|c| !c.is_control()).take(120).collect();
+        if body.contains("cloudflare") || body.contains("challenge") {
+            format!("site protégé par Cloudflare (HTTP {})", code.as_u16())
+        } else {
+            format!("réponse inattendue (HTTP {}) : {snippet}", code.as_u16())
+        }
     })?;
-    Some(song_info(s))
+    if let Some(e) = v["error"].as_str() {
+        return Err(format!("GetSongBPM répond : {e}"));
+    }
+    let list = v["search"].as_array().ok_or_else(|| format!("aucun résultat (HTTP {}) : {}", code.as_u16(), v.to_string().chars().take(120).collect::<String>()))?;
+    let s = list
+        .iter()
+        .find(|s| similar(s["title"].as_str().unwrap_or(""), &t) && similar(s.pointer("/artist/name").and_then(Value::as_str).unwrap_or(""), &a))
+        .ok_or_else(|| format!("{} résultats, aucun ne correspond", list.len()))?;
+    Ok(song_info(s))
 }
 
 fn song_info(s: &Value) -> (Option<f64>, Option<String>) {
@@ -258,6 +277,13 @@ fn round(b: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[ignore]
+    async fn net_getsongbpm_reply() {
+        let r = getsongbpm_query("cle-bidon", "Daft Punk", "One More Time").await;
+        println!("search GetSongBPM: {r:?}");
+    }
 
     #[test]
     fn picks_deezer_preview() {
