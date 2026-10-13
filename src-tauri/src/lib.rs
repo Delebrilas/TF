@@ -314,6 +314,16 @@ async fn likes_fetch(app: AppHandle) -> CmdResult<ext::Likes> {
     ext::likes(&app).await
 }
 
+#[tauri::command]
+async fn my_playlists(app: AppHandle) -> CmdResult<ext::Listing<ext::MyPlaylist>> {
+    ext::playlists(&app).await
+}
+
+#[tauri::command]
+async fn playlist_tracks(app: AppHandle, url: String, name: String) -> CmdResult<Vec<ext::ExtTrack>> {
+    ext::playlist_tracks(&app, &url, &name).await
+}
+
 /// Télécharge les likes choisis, un par un (les déjà présents sont ignorés, sauf `force`).
 #[tauri::command]
 async fn likes_download(app: AppHandle, tracks: Vec<ext::ExtTrack>, force: Option<bool>) -> CmdResult<AddResult> {
@@ -577,6 +587,8 @@ pub fn run() {
             ext_tracks,
             likes_fetch,
             likes_download,
+            my_playlists,
+            playlist_tracks,
             ext_refresh
         ])
         .run(tauri::generate_context!())

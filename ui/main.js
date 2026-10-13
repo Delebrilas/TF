@@ -2233,6 +2233,9 @@ $("#btn-myplaylists").onclick = openMyPlaylists;
 // ---------- Mes likes : titres likés Spotify et SoundCloud, à télécharger au choix ----------
 
 let likes = [];
+let likedTracks = []; // titres likés ; `likes` = ce qui est affiché (likés ou une playlist)
+let likesFrom = "likes";
+const plTracks = new Map(); // lien de playlist → titres
 let likesSrc = "all";
 let likesShown = [];
 const likesSel = new Set();
@@ -2247,20 +2250,64 @@ function likeOwned(x) {
 async function openLikes() {
   $("#likes").classList.remove("hidden");
   if (!libLoaded) loadLibrary();
+  loadMyPlaylists();
   // Le cache d'abord (instantané), puis la liste à jour.
-  if (!likes.length) {
+  if (!likedTracks.length) {
     const cached = await invoke("ext_tracks").catch(() => []);
-    likes = (cached || []).filter((x) => x.from === "Titres likés" || x.from === "Likes SoundCloud");
+    likedTracks = (cached || []).filter((x) => x.from === "Titres likés" || x.from === "Likes SoundCloud");
   }
-  renderLikes("Mise à jour de tes likes…");
+  if (likesFrom === "likes") {
+    likes = likedTracks;
+    renderLikes("Mise à jour de tes likes…");
+  }
   try {
     const r = await invoke("likes_fetch");
-    likes = r.tracks;
-    renderLikes(r.errors.join(" · "));
+    likedTracks = r.tracks;
+    if (likesFrom === "likes") (likes = likedTracks), renderLikes(r.errors.join(" · "));
   } catch (e) {
-    renderLikes(String(e), true);
+    if (likesFrom === "likes") renderLikes(String(e), true);
   }
 }
+
+let playlistsLoaded = false;
+async function loadMyPlaylists() {
+  if (playlistsLoaded) return;
+  try {
+    const r = await invoke("my_playlists");
+    playlistsLoaded = true;
+    const sel = $("#lk-from");
+    for (const [src, label] of [["spotify", "Playlists Spotify"], ["soundcloud", "Playlists SoundCloud"]]) {
+      const pls = r.items.filter((p) => p.source === src);
+      if (!pls.length) continue;
+      const g = document.createElement("optgroup");
+      g.label = label;
+      for (const p of pls) g.append(new Option(p.total != null ? `${p.name} (${p.total})` : p.name, p.url));
+      sel.append(g);
+    }
+    if (r.errors.length) toast(r.errors.join(" · "), true);
+  } catch {}
+}
+
+$("#lk-from").onchange = async (e) => {
+  const url = e.target.value;
+  likesFrom = url;
+  likesSel.clear();
+  $("#lk-src").classList.toggle("hidden", url !== "likes");
+  if (url === "likes") {
+    likes = likedTracks;
+    return renderLikes("");
+  }
+  const name = e.target.selectedOptions[0].textContent.replace(/ \(\d+\)$/, "");
+  likes = plTracks.get(url) || [];
+  renderLikes("Lecture de la playlist…");
+  try {
+    const t = await invoke("playlist_tracks", { url, name });
+    plTracks.set(url, t);
+    if (likesFrom === url) (likes = t), renderLikes("");
+  } catch (err) {
+    if (likesFrom === url) renderLikes(String(err), true);
+  }
+};
 
 function renderLikes(status = "", isErr = false) {
   const st = $("#lk-status");
@@ -2270,7 +2317,7 @@ function renderLikes(status = "", isErr = false) {
   const q = normT($("#lk-q").value);
   const onlyNew = $("#lk-new").checked;
   const rows = likes.filter(
-    (x) => (likesSrc === "all" || x.source === likesSrc) && (!q || normT(x.title + " " + x.artist).includes(q)) && !(onlyNew && likeOwned(x))
+    (x) => (likesFrom !== "likes" || likesSrc === "all" || x.source === likesSrc) && (!q || normT(x.title + " " + x.artist).includes(q)) && !(onlyNew && likeOwned(x))
   );
   likesShown = rows.slice(0, 500);
   const ul = $("#lk-list");
@@ -2278,7 +2325,7 @@ function renderLikes(status = "", isErr = false) {
   if (!rows.length) {
     const li = document.createElement("li");
     li.className = "muted lk-empty";
-    li.textContent = likes.length ? "Aucun titre ne correspond." : status ? "" : "Aucun like trouvé.";
+    li.textContent = likes.length ? "Aucun titre ne correspond." : status ? "" : likesFrom === "likes" ? "Aucun like trouvé." : "Playlist vide.";
     ul.append(li);
   }
   const frag = document.createDocumentFragment();

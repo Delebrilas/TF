@@ -196,6 +196,72 @@ pub async fn likes(app: &AppHandle) -> Result<Likes, String> {
     Ok(Likes { tracks, errors })
 }
 
+#[derive(Serialize)]
+pub struct MyPlaylist {
+    pub url: String,
+    pub name: String,
+    pub source: sources::Source,
+    pub total: Option<u64>,
+}
+
+/// Playlists Spotify (si connecté) et SoundCloud (profil des réglages).
+pub async fn playlists(app: &AppHandle) -> Result<Listing<MyPlaylist>, String> {
+    let sc_user = app.state::<crate::AppState>().settings.lock().unwrap().soundcloud_user.clone();
+    let mut out = Vec::new();
+    let mut errors = Vec::new();
+    if crate::spotify::connected() {
+        match crate::spotify::playlists().await {
+            Ok(l) => out.extend(l.into_iter().filter(|p| !p.url.contains("/collection/")).map(|p| MyPlaylist {
+                url: p.url,
+                name: p.name,
+                source: sources::Source::Spotify,
+                total: p.total,
+            })),
+            Err(e) => errors.push(format!("Spotify : {e}")),
+        }
+    }
+    if let Some(likes) = soundcloud_likes(&sc_user) {
+        let sets = likes.trim_end_matches("/likes").to_string() + "/sets";
+        match tools::locate(app) {
+            Some(t) => match sources::resolve(&t, &sets).await {
+                Ok(r) => out.extend(r.tracks.into_iter().map(|t| MyPlaylist {
+                    name: t.meta.title.unwrap_or_else(|| "Playlist SoundCloud".into()),
+                    url: t.url,
+                    source: sources::Source::Soundcloud,
+                    total: None,
+                })),
+                // Pas de playlist : yt-dlp répond « vide », ce n'est pas une erreur.
+                Err(e) if e.to_string().contains("vide") => {}
+                Err(e) => errors.push(format!("SoundCloud : {e}")),
+            },
+            None => errors.push("SoundCloud : yt-dlp n'est pas installé".into()),
+        }
+    }
+    Ok(Listing { items: out, errors })
+}
+
+#[derive(Serialize)]
+pub struct Listing<T> {
+    pub items: Vec<T>,
+    pub errors: Vec<String>,
+}
+
+/// Titres d'une playlist, prêts à télécharger un par un.
+pub async fn playlist_tracks(app: &AppHandle, url: &str, name: &str) -> Result<Vec<ExtTrack>, String> {
+    let tools = if sources::detect(url) == sources::Source::Spotify { tools::Tools::none() } else { tools::locate(app).ok_or("yt-dlp n'est pas installé")? };
+    let r = sources::resolve(&tools, url).await.map_err(|e| crate::jobs::friendly(&e.to_string()))?;
+    let mut tracks: Vec<ExtTrack> = r.tracks.into_iter().filter_map(|t| ext_track(t, name)).collect();
+    // BPM et clé déjà connus (sans ajouter ces titres au cache).
+    let cur = app.state::<Ext>().list();
+    for t in tracks.iter_mut() {
+        if let Some(c) = cur.iter().find(|c| c.id == t.id) {
+            t.bpm = c.bpm;
+            t.key = c.key.clone();
+        }
+    }
+    Ok(tracks)
+}
+
 /// Ajoute les nouveaux, met à jour les connus ; `fresh` récupère BPM et clé déjà trouvés.
 fn upsert(cur: &mut Vec<ExtTrack>, fresh: &mut [ExtTrack]) {
     for f in fresh.iter_mut() {

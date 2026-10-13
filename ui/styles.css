@@ -869,3 +869,4 @@ button.icon.sp { color: var(--spotify); }
 .lk-empty { padding: 14px 8px; }
 .lk-foot { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
 .lk-foot #lk-count { flex: 1; }
+#lk-from { max-width: 240px; height: 34px; background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 0 8px; font: inherit; font-size: 13px; }
