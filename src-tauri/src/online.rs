@@ -191,15 +191,27 @@ pub async fn discover(seeds: &[String], lo: f64, hi: f64, max: usize) -> Vec<Fou
     // 1. Artistes proches, en alternant entre les artistes de départ.
     let mut related: Vec<Vec<(u64, String, String)>> = Vec::new();
     for seed in seeds.iter().take(5) {
-        let q = urlencoding::encode(first_artist(seed).trim()).into_owned();
-        let Some(id) = deezer_json(&format!("search/artist?q={q}&limit=1")).await.and_then(|v| v["data"][0]["id"].as_u64()) else { continue };
-        let Some(v) = deezer_json(&format!("artist/{id}/related?limit=8")).await else { continue };
-        let list = v["data"].as_array().cloned().unwrap_or_default();
-        related.push(list.iter().filter_map(|a| Some((a["id"].as_u64()?, a["name"].as_str()?.to_string(), seed.clone()))).collect());
+        let name = first_artist(seed).trim().to_string();
+        let q = urlencoding::encode(&name).into_owned();
+        // Le bon artiste : nom identique, sinon le plus suivi (pas « Justice & Untel »).
+        let Some(v) = deezer_json(&format!("search/artist?q={q}&limit=8")).await else { continue };
+        let cands = v["data"].as_array().cloned().unwrap_or_default();
+        let fans = |a: &Value| a["nb_fan"].as_u64().unwrap_or(0);
+        let best = cands
+            .iter()
+            .filter(|a| normalize(a["name"].as_str().unwrap_or("")) == normalize(&name))
+            .max_by_key(|a| fans(a))
+            .or_else(|| cands.iter().max_by_key(|a| fans(a)));
+        let Some(id) = best.and_then(|a| a["id"].as_u64()) else { continue };
+        let list = deezer_json(&format!("artist/{id}/related?limit=8")).await.and_then(|v| v["data"].as_array().cloned()).unwrap_or_default();
+        let mut rel: Vec<_> = list.iter().filter_map(|a| Some((a["id"].as_u64()?, a["name"].as_str()?.to_string(), seed.clone()))).collect();
+        // Artiste sans « proches » connus : ses autres titres servent de découvertes.
+        rel.push((id, best.and_then(|a| a["name"].as_str()).unwrap_or(&name).to_string(), seed.clone()));
+        related.push(rel);
     }
     let mut artists = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    for i in 0..8 {
+    for i in 0..9 {
         for r in &related {
             if let Some(a) = r.get(i) {
                 if seen.insert(a.0) {
@@ -208,25 +220,26 @@ pub async fn discover(seeds: &[String], lo: f64, hi: f64, max: usize) -> Vec<Fou
             }
         }
     }
-    artists.truncate(16);
-    // 2. Titres de chacun dans la plage de BPM (Deezer filtre côté serveur), puis BPM exact.
+    artists.truncate(18);
+    // 2. Leurs titres phares, dont on lit le BPM exact (le filtre BPM de la recherche Deezer ne répond plus).
     let per_artist: Vec<Vec<Found>> = stream::iter(artists)
-        .map(|(_, name, via)| async move {
-            let q = format!("artist:\"{name}\" bpm_min:\"{}\" bpm_max:\"{}\"", lo.floor(), hi.ceil());
-            let Some(v) = deezer_json(&format!("search?q={}&limit=6", urlencoding::encode(&q))).await else { return vec![] };
+        .map(|(id, name, via)| async move {
+            let Some(v) = deezer_json(&format!("artist/{id}/top?limit=8")).await else { return vec![] };
             let mut out = Vec::new();
-            for t in v["data"].as_array().cloned().unwrap_or_default().iter().take(4) {
-                let Some(id) = t["id"].as_u64() else { continue };
-                let Some(full) = deezer_json(&format!("track/{id}")).await else { continue };
-                let Some(bpm) = full["bpm"].as_f64().filter(|b| *b >= lo && *b <= hi) else { continue };
+            for t in v["data"].as_array().cloned().unwrap_or_default().iter() {
+                let Some(tid) = t["id"].as_u64() else { continue };
+                let Some(full) = deezer_json(&format!("track/{tid}")).await else { continue };
+                let Some(raw) = full["bpm"].as_f64().filter(|b| *b > 30.0) else { continue };
+                // Demi ou double tempo accepté.
+                let Some(bpm) = [raw, raw * 2.0, raw / 2.0].into_iter().find(|b| *b >= lo && *b <= hi) else { continue };
                 out.push(Found {
-                    id,
+                    id: tid,
                     artist: t.pointer("/artist/name").and_then(Value::as_str).unwrap_or(&name).to_string(),
                     title: t["title"].as_str().unwrap_or("").to_string(),
                     duration: t["duration"].as_f64(),
                     bpm,
                     cover: t.pointer("/album/cover_medium").and_then(Value::as_str).map(String::from),
-                    link: t["link"].as_str().map(String::from).unwrap_or_else(|| format!("https://www.deezer.com/track/{id}")),
+                    link: t["link"].as_str().map(String::from).unwrap_or_else(|| format!("https://www.deezer.com/track/{tid}")),
                     via: via.clone(),
                 });
                 if out.len() >= 2 {
@@ -235,7 +248,7 @@ pub async fn discover(seeds: &[String], lo: f64, hi: f64, max: usize) -> Vec<Fou
             }
             out
         })
-        .buffered(3)
+        .buffered(4)
         .collect()
         .await;
     // Un ou deux titres par artiste, en alternant pour varier.
