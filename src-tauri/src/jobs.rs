@@ -806,8 +806,19 @@ pub fn friendly(err: &str) -> String {
         "Contenu indisponible.".into()
     } else if e.contains("ffmpeg") || e.contains("ffprobe") {
         "ffmpeg introuvable ou en échec.".into()
+    } else if e.contains("429") || e.contains("too many requests") || e.contains("rate limit") {
+        "Le site limite les requêtes pour l'instant (erreur 429). Réessaie dans quelques minutes.".into()
+    } else if e.contains("no space left") || e.contains("not enough space") || e.contains("disk full") || e.contains("espace insuffisant") {
+        "Disque plein : libère de la place ou choisis un autre dossier de sortie (Réglages).".into()
+    } else if e.contains("permission denied") || e.contains("access is denied") || e.contains("accès refusé") || e.contains("os error 5)") {
+        "Accès refusé au dossier de sortie : choisis un dossier où tu peux écrire (Réglages), ou ferme le fichier s'il est ouvert ailleurs.".into()
+    } else if is_network_error(err) {
+        "Pas de connexion (ou site injoignable) après plusieurs essais. Vérifie internet puis clique sur Réessayer.".into()
     } else {
-        err.to_string()
+        // Dernière ligne utile, sans la pile technique de yt-dlp.
+        let line = err.lines().rev().map(str::trim).find(|l| !l.is_empty()).unwrap_or(err);
+        let line = line.trim_start_matches("ERROR:").trim();
+        if line.chars().count() > 220 { format!("{}…", line.chars().take(220).collect::<String>()) } else { line.to_string() }
     }
 }
 
@@ -1015,6 +1026,15 @@ mod tests {
         assert_eq!(sort_folder("genre", &Meta::default(), None, None), PathBuf::from("Genre inconnu"));
         assert_eq!(sort_folder("none", &meta(), Some(120.0), None), PathBuf::new());
         assert_eq!(sort_folder("key_bpm", &meta(), Some(124.0), Some("8A")), PathBuf::from("8A").join("120-124 BPM"));
+    }
+
+    #[test]
+    fn friendly_messages() {
+        assert!(friendly("HTTP Error 429: Too Many Requests").contains("429"));
+        assert!(friendly("OSError: [Errno 28] No space left on device").contains("Disque plein"));
+        assert!(friendly("PermissionError: [WinError 5] Access is denied: 'C:\\x.mp3'").contains("Accès refusé"));
+        assert!(friendly("Read timed out").contains("connexion"));
+        assert_eq!(friendly("[youtube] x\nERROR: Something odd"), "Something odd");
     }
 
     #[test]

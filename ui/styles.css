@@ -874,3 +874,17 @@ button.icon.sp { color: var(--spotify); }
 .lk-row.playing .lk-play, .lk-row.loading .lk-play { color: var(--accent); }
 .lk-row.loading .lk-play svg { animation: lk-pulse 1s ease-in-out infinite; }
 @keyframes lk-pulse { 50% { opacity: .3; } }
+
+/* ---------- Application : mises à jour, diagnostic, aide ---------- */
+.s-section { margin: 22px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.s-app { display: flex; align-items: center; gap: 10px; margin: 4px 0 10px; }
+.s-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+#btn-help { font-weight: 700; font-size: 15px; }
+.dg-list { list-style: none; margin: 0 0 10px; padding: 0; }
+.dg-list li { display: grid; grid-template-columns: 22px 150px 1fr; gap: 8px; padding: 6px 4px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.dg-list .ok { color: var(--ok); } .dg-list .ko { color: var(--err); } .dg-list .skip { color: var(--muted); }
+.dg-list .wait { color: var(--muted); }
+#dg-report { width: 100%; font: 12px ui-monospace, Consolas, monospace; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 8px; resize: vertical; }
+.help-card .segmented { margin: 12px 0 4px; }
+.hp-page ol { margin: 10px 0 0; padding-left: 20px; line-height: 1.55; font-size: 13.5px; }
+.hp-page li { margin-bottom: 6px; }

@@ -1,7 +1,9 @@
 mod artwork;
+mod backup;
 mod bpm;
 mod clipboard;
 mod desk;
+mod diag;
 mod dj;
 mod ext;
 mod history;
@@ -308,6 +310,73 @@ fn ext_tracks(ext: State<ext::Ext>) -> Vec<ext::ExtTrack> {
     ext.list()
 }
 
+#[derive(Serialize)]
+struct Diagnosis {
+    checks: Vec<diag::Check>,
+    report: String,
+}
+
+/// « Tester mes sources » (Réglages).
+#[tauri::command]
+async fn diagnose(app: AppHandle) -> Diagnosis {
+    let checks = diag::run(&app).await;
+    let report = diag::report(&app, &checks);
+    Diagnosis { checks, report }
+}
+
+#[tauri::command]
+async fn backup_export(app: AppHandle, path: String, ui: serde_json::Value) -> CmdResult<usize> {
+    backup::export(&app, std::path::Path::new(&path), ui).map_err(err)
+}
+
+/// Remet la sauvegarde en place ; l'interface enregistre ses options puis appelle `app_restart`.
+#[tauri::command]
+async fn backup_import(app: AppHandle, path: String) -> CmdResult<serde_json::Value> {
+    backup::import(&app, std::path::Path::new(&path)).map_err(err)
+}
+
+#[tauri::command]
+fn app_restart(app: AppHandle) {
+    app.restart();
+}
+
+#[derive(Serialize)]
+struct UpdateInfo {
+    current: String,
+    version: Option<String>,
+    notes: Option<String>,
+}
+
+/// Nouvelle version publiée sur GitHub ?
+#[tauri::command]
+async fn update_check(app: AppHandle) -> CmdResult<UpdateInfo> {
+    use tauri_plugin_updater::UpdaterExt;
+    let current = app.package_info().version.to_string();
+    let up = app.updater().map_err(err)?.check().await.map_err(|e| format!("Vérification impossible : {e}"))?;
+    Ok(UpdateInfo { current, version: up.as_ref().map(|u| u.version.clone()), notes: up.and_then(|u| u.body) })
+}
+
+/// Télécharge la nouvelle version (signée), l'installe puis relance l'app.
+#[tauri::command]
+async fn update_install(app: AppHandle) -> CmdResult<()> {
+    use tauri_plugin_updater::UpdaterExt;
+    let up = app.updater().map_err(err)?.check().await.map_err(err)?.ok_or("Déjà à jour")?;
+    let a = app.clone();
+    let mut got = 0usize;
+    up.download_and_install(
+        move |chunk, total| {
+            got += chunk;
+            if let Some(t) = total {
+                let _ = a.emit("update-progress", (got as f64 / t as f64 * 100.0).round());
+            }
+        },
+        || {},
+    )
+    .await
+    .map_err(|e| format!("Mise à jour impossible : {e}"))?;
+    app.restart();
+}
+
 /// Titres likés Spotify et likes SoundCloud (fenêtre « Mes likes »).
 #[tauri::command]
 async fn likes_fetch(app: AppHandle) -> CmdResult<ext::Likes> {
@@ -512,6 +581,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_drag::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| desk::show_window(app)))
@@ -596,6 +666,12 @@ pub fn run() {
             my_playlists,
             playlist_tracks,
             like_preview,
+            update_check,
+            update_install,
+            backup_export,
+            backup_import,
+            app_restart,
+            diagnose,
             ext_refresh
         ])
         .run(tauri::generate_context!())

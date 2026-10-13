@@ -32,7 +32,12 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Clé de signature des mises à jour automatiques (secret du dépôt).
+          # Sans elle, la version se publie quand même, sans mise à jour auto.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         with:
+          args: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' && '--config src-tauri/tauri.updater.json' || '' }}
           # Une release publiée par version (tauri.conf.json) : v0.2.0, v0.3.0…
           tagName: v__VERSION__
           releaseName: "TrackFetcher v__VERSION__"

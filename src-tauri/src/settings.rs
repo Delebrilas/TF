@@ -43,6 +43,8 @@ pub struct Settings {
     pub notify: bool,
     /// Fermer la fenêtre la range dans la zone de notification.
     pub close_to_tray: bool,
+    /// Cherche les nouvelles versions au démarrage (et toutes les 6 h).
+    pub auto_update: bool,
     /// Profil SoundCloud dont les likes alimentent le GPS de set (maillons manquants).
     pub soundcloud_user: String,
 }
@@ -73,6 +75,7 @@ impl Default for Settings {
             notify: true,
             close_to_tray: true,
             soundcloud_user: String::new(),
+            auto_update: true,
         }
     }
 }

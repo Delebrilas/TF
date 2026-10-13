@@ -112,7 +112,7 @@ function showView(v) {
   for (const b of $("#tabs").children) b.classList.toggle("on", b.dataset.view === v);
   for (const s of document.querySelectorAll(".view")) s.classList.toggle("hidden", s.id !== "view-" + v);
   if (v === "library") loadLibrary();
-  if (v === "dj") djShow();
+  if (v === "dj") djShow(), helpOnFirstDj();
   hideCtx();
   renderSelBar();
 }
@@ -1377,6 +1377,7 @@ function fillSettings() {
   setSwitch("#s-ambient", settings.ambient);
   setSwitch("#s-pulse", settings.pulse);
   setSwitch("#s-notify", settings.notify);
+  setSwitch("#s-autoupdate", settings.auto_update);
   setSwitch("#s-tray", settings.close_to_tray);
   document.body.classList.toggle("ambient-on", !!settings.ambient);
   const seg = (id, v) => { for (const b of $(id).children) b.classList.toggle("on", b.dataset.v === String(v)); };
@@ -1433,6 +1434,7 @@ $("#s-clip").onclick = () => saveSettings({ watch_clipboard: !settings.watch_cli
 $("#s-ambient").onclick = () => saveSettings({ ambient: !settings.ambient });
 $("#s-pulse").onclick = () => saveSettings({ pulse: !settings.pulse });
 $("#s-notify").onclick = () => saveSettings({ notify: !settings.notify });
+$("#s-autoupdate").onclick = () => saveSettings({ auto_update: !settings.auto_update });
 $("#s-tray").onclick = () => saveSettings({ close_to_tray: !settings.close_to_tray });
 segClick("#s-cookies", "cookies_browser");
 $("#s-key").onchange = (e) => saveSettings({ getsongbpm_key: e.target.value.trim() });
@@ -2488,3 +2490,176 @@ document.addEventListener("keydown", (e) => e.key === "Escape" && $("#myplaylist
   });
   $("#url").focus();
 })();
+
+// ---------- Mises à jour automatiques ----------
+
+let updateOffered = null;
+async function checkUpdate(manual = false) {
+  try {
+    const u = await invoke("update_check");
+    $("#s-version").textContent = `Version ${u.current}` + (u.version ? ` · ${u.version} disponible` : " · à jour");
+    if (!u.version) return manual && toast("TrackFetcher est à jour");
+    if (!manual && updateOffered === u.version) return;
+    updateOffered = u.version;
+    offerUpdate(u.version);
+  } catch (e) {
+    if (manual) toast(String(e), true);
+  }
+}
+function offerUpdate(v) {
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.style.cssText = "display:flex;align-items:center;gap:12px";
+  const span = document.createElement("span");
+  span.textContent = `TrackFetcher ${v} est disponible.`;
+  const go = document.createElement("button");
+  go.className = "link";
+  go.style.cssText = "color:var(--accent);font-weight:600";
+  go.textContent = "Installer et redémarrer";
+  const later = document.createElement("button");
+  later.className = "link";
+  later.textContent = "Plus tard";
+  later.onclick = () => el.remove();
+  go.onclick = async () => {
+    go.disabled = later.disabled = true;
+    span.textContent = "Téléchargement de la mise à jour…";
+    const off = await listen("update-progress", (e) => (span.textContent = `Téléchargement de la mise à jour… ${e.payload} %`));
+    try {
+      await invoke("update_install");
+    } catch (e) {
+      off();
+      el.remove();
+      toast(String(e), true);
+    }
+  };
+  el.append(span, go, later);
+  $("#toasts").appendChild(el);
+}
+$("#s-update-check").onclick = () => checkUpdate(true);
+setTimeout(() => {
+  invoke("update_check").then((u) => ($("#s-version").textContent = `Version ${u.current}`)).catch(() => {});
+  if (settings?.auto_update) checkUpdate(false);
+}, 6000);
+setInterval(() => settings?.auto_update && checkUpdate(false), 6 * 3600 * 1000);
+
+// ---------- Sauvegarde et restauration ----------
+
+const UI_KEYS = ["tf-dj", "tf-gps", "tf-gps-opts", "tf-help-dj", "tf-theme", "tf-volume", "tf-viz", "tf-bpm", "tf-libmode", "tf-merge-ignored"];
+$("#s-backup").onclick = async () => {
+  const d = new Date();
+  const name = `TrackFetcher-sauvegarde-${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}.json`;
+  const path = await T.dialog.save({ defaultPath: name, filters: [{ name: "Sauvegarde TrackFetcher", extensions: ["json"] }] });
+  if (!path) return;
+  const ui = {};
+  for (const k of UI_KEYS) {
+    try {
+      const v = localStorage.getItem(k);
+      if (v != null) ui[k] = v;
+    } catch {}
+  }
+  try {
+    await invoke("backup_export", { path, ui });
+    toast("Sauvegarde enregistrée");
+  } catch (e) {
+    toast(String(e), true);
+  }
+};
+$("#s-restore").onclick = async () => {
+  const path = await T.dialog.open({ multiple: false, filters: [{ name: "Sauvegarde TrackFetcher", extensions: ["json"] }] });
+  if (!path) return;
+  const ok = await T.dialog.ask("Tes réglages, notes, paires et grilles actuels seront remplacés par ceux de la sauvegarde, puis TrackFetcher redémarrera.", {
+    title: "Restaurer une sauvegarde",
+    kind: "warning",
+    okLabel: "Restaurer",
+    cancelLabel: "Annuler",
+  });
+  if (!ok) return;
+  try {
+    const ui = await invoke("backup_import", { path: typeof path === "string" ? path : path.path });
+    for (const [k, v] of Object.entries(ui || {}))
+      if (UI_KEYS.includes(k) && typeof v === "string")
+        try {
+          localStorage.setItem(k, v);
+        } catch {}
+    await invoke("app_restart");
+  } catch (e) {
+    toast(String(e), true);
+  }
+};
+
+// ---------- Tester mes sources ----------
+
+async function runDiag() {
+  $("#diag").classList.remove("hidden");
+  const ul = $("#dg-list");
+  ul.innerHTML = `<li><span class="wait">…</span><span>Test en cours</span><span class="muted">YouTube, SoundCloud, Spotify, Deezer… (jusqu'à une minute)</span></li>`;
+  $("#dg-report").value = "";
+  $("#dg-again").disabled = true;
+  try {
+    const r = await invoke("diagnose");
+    ul.replaceChildren();
+    for (const c of r.checks) {
+      const li = document.createElement("li");
+      const mark = document.createElement("span");
+      mark.className = c.ok === true ? "ok" : c.ok === false ? "ko" : "skip";
+      mark.textContent = c.ok === true ? "✓" : c.ok === false ? "✗" : "—";
+      const n = document.createElement("b");
+      n.textContent = c.name;
+      const d = document.createElement("span");
+      d.textContent = c.detail;
+      li.append(mark, n, d);
+      ul.append(li);
+    }
+    $("#dg-report").value = r.report;
+  } catch (e) {
+    ul.innerHTML = "";
+    $("#dg-report").value = String(e);
+  } finally {
+    $("#dg-again").disabled = false;
+  }
+}
+$("#s-diag").onclick = runDiag;
+$("#dg-again").onclick = runDiag;
+$("#dg-close").onclick = () => $("#diag").classList.add("hidden");
+$("#dg-copy").onclick = async () => {
+  const ta = $("#dg-report");
+  try {
+    await navigator.clipboard.writeText(ta.value);
+  } catch {
+    ta.select();
+    document.execCommand("copy");
+  }
+  toast("Rapport copié");
+};
+
+// ---------- Aide ----------
+
+function showHelp(page = "dl") {
+  $("#help").classList.remove("hidden");
+  for (const b of $("#hp-tabs").children) b.classList.toggle("on", b.dataset.v === page);
+  for (const p of document.querySelectorAll(".hp-page")) p.classList.toggle("hidden", p.dataset.p !== page);
+}
+$("#hp-tabs").onclick = (e) => {
+  const v = e.target.closest("button")?.dataset.v;
+  if (v) showHelp(v);
+};
+$("#btn-help").onclick = () => showHelp(view === "dj" ? "dj" : view === "library" ? "lib" : "dl");
+$("#s-help").onclick = () => showHelp();
+$("#hp-close").onclick = () => $("#help").classList.add("hidden");
+for (const id of ["help", "diag"])
+  $("#" + id).addEventListener("click", (e) => {
+    if (e.target.id === id) $("#" + id).classList.add("hidden");
+  });
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") for (const id of ["help", "diag"]) $("#" + id).classList.add("hidden");
+});
+// Première visite de l'onglet DJ : la prise en main s'ouvre une fois.
+function helpOnFirstDj() {
+  try {
+    if (localStorage.getItem("tf-help-dj")) return;
+    localStorage.setItem("tf-help-dj", "1");
+  } catch {
+    return;
+  }
+  showHelp("dj");
+}

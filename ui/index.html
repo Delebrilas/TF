@@ -69,6 +69,7 @@
       <button class="icon" id="btn-files" title="Analyser le BPM de MP3 existants"><svg><use href="#i-file"/></svg></button>
       <button class="icon" id="btn-folder" title="Ouvrir le dossier de sortie"><svg><use href="#i-folder"/></svg></button>
       <button class="icon" id="btn-theme" title="Mode clair / sombre"><svg><use href="#i-moon"/></svg></button>
+      <button class="icon" id="btn-help" title="Aide">?</button>
       <button class="icon" id="btn-settings" title="Réglages"><svg><use href="#i-gear"/></svg></button>
     </div>
   </header>
@@ -452,6 +453,23 @@
         <span>Clé API GetSongBPM <small class="muted">(facultative, gratuite sur getsongbpm.com/api)</small></span>
         <input id="s-key" type="text" spellcheck="false" placeholder="Non renseignée" />
       </div>
+
+      <h3 class="s-section">Application</h3>
+      <div class="toggle">
+        <button type="button" class="switch" role="switch" id="s-autoupdate"></button>
+        <span><b>Mises à jour automatiques</b><small>Cherche une nouvelle version au démarrage, puis propose de l'installer.</small></span>
+      </div>
+      <div class="s-app">
+        <span class="muted small" id="s-version"></span>
+        <button class="link" id="s-update-check">Vérifier maintenant</button>
+      </div>
+      <div class="s-actions">
+        <button class="ghost small" id="s-diag"><svg><use href="#i-check"/></svg><span>Tester mes sources</span></button>
+        <button class="ghost small" id="s-backup"><svg><use href="#i-down"/></svg><span>Sauvegarder…</span></button>
+        <button class="ghost small" id="s-restore"><svg><use href="#i-up"/></svg><span>Restaurer…</span></button>
+        <button class="ghost small" id="s-help"><span>Aide</span></button>
+      </div>
+      <small class="muted">La sauvegarde garde tes réglages, grilles, notes, paires, playlists suivies et l'historique des téléchargements (pas la connexion Spotify).</small>
     </div>
   </aside>
 
@@ -494,6 +512,68 @@
         <button class="link" id="lk-all">Tout cocher</button>
         <span class="muted small" id="lk-count"></span>
         <button class="primary small" id="lk-dl" disabled><svg><use href="#i-arrow"/></svg><span>Télécharger la sélection</span></button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal hidden" id="diag">
+    <div class="modal-card wide">
+      <div class="modal-head">
+        <h3>Tester mes sources</h3>
+        <button class="icon" id="dg-close" title="Fermer"><svg><use href="#i-x"/></svg></button>
+      </div>
+      <p class="muted">Chaque source est essayée depuis ton PC. Copie le rapport et colle-le dans la conversation si quelque chose échoue.</p>
+      <ul class="dg-list" id="dg-list"></ul>
+      <textarea id="dg-report" rows="6" readonly spellcheck="false"></textarea>
+      <div class="ask-actions"><button class="ghost" id="dg-again">Relancer</button><button class="primary" id="dg-copy">Copier le rapport</button></div>
+    </div>
+  </div>
+
+  <div class="modal hidden" id="help">
+    <div class="modal-card wide help-card">
+      <div class="modal-head">
+        <h3>Prise en main</h3>
+        <button class="icon" id="hp-close" title="Fermer"><svg><use href="#i-x"/></svg></button>
+      </div>
+      <div class="segmented" id="hp-tabs">
+        <button data-v="dl" class="on">Télécharger</button><button data-v="lib">Bibliothèque</button><button data-v="dj">DJ</button><button data-v="gps">GPS de set</button>
+      </div>
+      <div class="hp-page" data-p="dl">
+        <ol>
+          <li>Colle un lien Spotify, YouTube ou SoundCloud (morceau, album, playlist) dans la barre du haut, ou tape « artiste titre » pour chercher.</li>
+          <li>Le MP3 arrive dans ton dossier de sortie avec son <b>BPM</b>, sa <b>clé</b> (Camelot) et son <b>énergie</b> (1 à 10) dans les tags.</li>
+          <li>♥ en haut à droite : tes likes et playlists Spotify et SoundCloud, avec un extrait ▶ et un bouton Télécharger par titre.</li>
+          <li>« Playlists suivies » : les nouveautés d'une playlist se téléchargent toutes seules.</li>
+          <li>Un souci ? Réglages › <b>Tester mes sources</b>, puis envoie le rapport.</li>
+        </ol>
+      </div>
+      <div class="hp-page hidden" data-p="lib">
+        <ol>
+          <li>Filtre par BPM avec le curseur, cherche par titre, artiste, genre ou note.</li>
+          <li>Survole une pochette pour une pré-écoute, double-clic pour lire.</li>
+          <li>Clic droit sur un morceau : note perso, morceaux compatibles, charger sur une platine, afficher dans l'explorateur.</li>
+          <li>Glisse un morceau vers Rekordbox ou un dossier. Export CSV avec le bouton dédié.</li>
+        </ol>
+      </div>
+      <div class="hp-page hidden" data-p="dj">
+        <ol>
+          <li>Charge un morceau sur A et un sur B (boutons A / B de la liste, ou glisser-déposer).</li>
+          <li><b>Mixer</b> lance la transition à la prochaine mesure ; ⇄ inverse le sens. Espace = Mixer, Q / P = lecture A / B.</li>
+          <li>Avec « Point de transition auto », le mix part tout seul à la sortie conseillée (début d'outro).</li>
+          <li>Styles : coche ceux que tu veux ; « Varier » en tire un différent à chaque fois. Chaque option a son interrupteur.</li>
+          <li>Une transition réussie ? « Garder cette paire » : elle sera proposée en premier la prochaine fois.</li>
+          <li>« Pas de répétition » écarte les morceaux déjà joués des suggestions.</li>
+        </ol>
+      </div>
+      <div class="hp-page hidden" data-p="gps">
+        <ol>
+          <li>Onglet <b>GPS de set</b> en bas de l'écran DJ : choisis un départ (ou laisse la platine en cours) et une destination, un morceau ou une ambiance (BPM, clé, énergie).</li>
+          <li>« Calculer l'itinéraire » : la route avance par petits pas de tempo, de clé et d'énergie.</li>
+          <li>📌 épingle un morceau comme passage obligé, ✕ l'évite. « Durée du set » remplit le temps voulu et donne l'heure de chaque morceau.</li>
+          <li>Dessine une courbe de BPM à la souris pour donner la forme du set.</li>
+          <li>« Bande-annonce » joue chaque transition en accéléré. « Lancer le set » + « Pilote auto » enchaîne tout seul.</li>
+          <li>Transition difficile ? L'app propose un titre de tes likes pour faire le pont.</li>
+        </ol>
       </div>
     </div>
   </div>
