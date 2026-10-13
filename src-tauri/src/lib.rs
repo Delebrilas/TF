@@ -308,6 +308,37 @@ fn ext_tracks(ext: State<ext::Ext>) -> Vec<ext::ExtTrack> {
     ext.list()
 }
 
+/// Titres likés Spotify et likes SoundCloud (fenêtre « Mes likes »).
+#[tauri::command]
+async fn likes_fetch(app: AppHandle) -> CmdResult<ext::Likes> {
+    ext::likes(&app).await
+}
+
+/// Télécharge les likes choisis, un par un (les déjà présents sont ignorés, sauf `force`).
+#[tauri::command]
+async fn likes_download(app: AppHandle, tracks: Vec<ext::ExtTrack>, force: Option<bool>) -> CmdResult<AddResult> {
+    let reqs: Vec<_> = tracks.iter().map(|t| t.request()).collect();
+    let (output_dir, skip) = {
+        let st = app.state::<AppState>();
+        let s = st.settings.lock().unwrap();
+        (s.output_dir.clone(), s.skip_existing && !force.unwrap_or(false))
+    };
+    let (fresh, skipped) = if skip {
+        let a = app.clone();
+        let in_queue = jobs::queued_identities(&app);
+        tauri::async_runtime::spawn_blocking(move || history::split_new(&a, &output_dir, reqs, &in_queue)).await.map_err(err)?
+    } else {
+        (reqs, vec![])
+    };
+    let added = fresh.len();
+    for r in fresh {
+        let sk = history::source_key(r.source, &r.key);
+        jobs::enqueue(&app, r.source, r.url, r.meta, None, sk);
+    }
+    jobs::pump(&app);
+    Ok(AddResult { added, skipped: skipped.len(), skipped_titles: skipped.into_iter().take(5).collect() })
+}
+
 /// Relit likes et playlists, puis cherche BPM et tonalité (en arrière-plan).
 #[tauri::command]
 fn ext_refresh(app: AppHandle) -> bool {
@@ -544,6 +575,8 @@ pub fn run() {
             pair_remove,
             export_csv,
             ext_tracks,
+            likes_fetch,
+            likes_download,
             ext_refresh
         ])
         .run(tauri::generate_context!())

@@ -852,3 +852,20 @@ button.icon.sp { color: var(--spotify); }
 .gps-picker-box .dj-list { max-height: 320px; margin-top: 8px; }
 .gps-picker-box .dj-list li { grid-template-columns: 1fr auto; cursor: pointer; }
 .gps-pick-deck { cursor: pointer; color: var(--accent); }
+
+/* ---------- Mes likes ---------- */
+.likes-card { width: min(760px, 100%); display: flex; flex-direction: column; }
+.lk-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 12px 0 6px; }
+.lk-bar .search { flex: 1; min-width: 180px; }
+.lk-bar .search input { width: 100%; }
+.lk-hide { font-size: 12px; color: var(--muted); display: inline-flex; gap: 6px; align-items: center; }
+.lk-status { min-height: 16px; margin-bottom: 4px; }
+.lk-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; max-height: 52vh; }
+.lk-row { display: grid; grid-template-columns: auto 40px minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 6px 8px; border-radius: 10px; }
+.lk-row:hover { background: var(--card-hover); }
+.lk-row .mp-cover { width: 40px; height: 40px; }
+.lk-row.owned .mp-meta b { color: var(--muted); }
+.lk-src { width: 16px; height: 16px; color: var(--muted); }
+.lk-empty { padding: 14px 8px; }
+.lk-foot { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+.lk-foot #lk-count { flex: 1; }

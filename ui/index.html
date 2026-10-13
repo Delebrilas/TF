@@ -43,6 +43,7 @@
     <symbol id="i-external" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M14 4h6v6M20 4l-9 9M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="4" fill="none" stroke="currentColor" stroke-width="2"/><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="m8 12 3 3 5-6"/></symbol>
+    <symbol id="i-heart" viewBox="0 0 24 24"><path fill="currentColor" d="M12 20.6 10.6 19.3C5.6 14.8 2.4 11.9 2.4 8.4 2.4 5.6 4.6 3.4 7.4 3.4c1.6 0 3.1.7 4.6 2.2 1.5-1.5 3-2.2 4.6-2.2 2.8 0 5 2.2 5 5 0 3.5-3.2 6.4-8.2 10.9z"/></symbol>
     <symbol id="i-star" viewBox="0 0 24 24"><path fill="currentColor" d="m12 2.8 2.8 5.8 6.3.9-4.6 4.4 1.1 6.3L12 17.2l-5.6 3 1.1-6.3-4.6-4.4 6.3-.9z"/></symbol>
     <symbol id="i-cue" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M6 4v16M10 12l9-7v14z"/></symbol>
     <symbol id="i-sync" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M20 11a8 8 0 0 0-14.3-4.9L4 8M4 4v4h4M4 13a8 8 0 0 0 14.3 4.9L20 16M20 20v-4h-4"/></symbol>
@@ -63,6 +64,7 @@
       <button data-view="watch">Playlists suivies <span class="badge" id="badge-watch"></span></button>
     </nav>
     <div class="top-actions">
+      <button class="icon" id="btn-likes" title="Mes likes Spotify et SoundCloud"><svg><use href="#i-heart"/></svg></button>
       <button class="icon sp hidden" id="btn-myplaylists" title="Mes playlists Spotify"><svg><use href="#i-spotify"/></svg></button>
       <button class="icon" id="btn-files" title="Analyser le BPM de MP3 existants"><svg><use href="#i-file"/></svg></button>
       <button class="icon" id="btn-folder" title="Ouvrir le dossier de sortie"><svg><use href="#i-folder"/></svg></button>
@@ -471,6 +473,27 @@
         <button class="icon" id="mp-close" title="Fermer"><svg><use href="#i-x"/></svg></button>
       </div>
       <div id="mp-list"></div>
+    </div>
+  </div>
+
+  <div class="modal hidden" id="likes">
+    <div class="modal-card wide likes-card">
+      <div class="modal-head">
+        <h3>Mes likes</h3>
+        <button class="icon" id="lk-close" title="Fermer"><svg><use href="#i-x"/></svg></button>
+      </div>
+      <div class="lk-bar">
+        <div class="segmented" id="lk-src"><button data-v="all" class="on">Tous</button><button data-v="spotify">Spotify</button><button data-v="soundcloud">SoundCloud</button></div>
+        <label class="search"><svg><use href="#i-search"/></svg><input type="text" id="lk-q" placeholder="Titre, artiste…" /></label>
+        <label class="lk-hide"><input type="checkbox" id="lk-new" /> Masquer ceux que j'ai déjà</label>
+      </div>
+      <div class="lk-status muted small" id="lk-status"></div>
+      <ul class="lk-list" id="lk-list"></ul>
+      <div class="lk-foot">
+        <button class="link" id="lk-all">Tout cocher</button>
+        <span class="muted small" id="lk-count"></span>
+        <button class="primary small" id="lk-dl" disabled><svg><use href="#i-arrow"/></svg><span>Télécharger la sélection</span></button>
+      </div>
     </div>
   </div>
 

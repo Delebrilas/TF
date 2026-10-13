@@ -1273,7 +1273,9 @@ function setVizMode(m) {
   for (const b of $("#np-modes").children) b.classList.toggle("on", b.dataset.mode === m);
   try { localStorage.setItem("tf-viz", m); } catch {}
 }
-$("#np-modes").onclick = (e) => e.target.dataset.mode && setVizMode(e.target.dataset.mode);
+$("#np-modes").onclick = (e) => {
+  if (e.target.dataset.mode) setVizMode(e.target.dataset.mode);
+};
 setVizMode(vizMode);
 
 // ---------- Playlists suivies ----------
@@ -1402,7 +1404,9 @@ async function saveSettings(patch) {
 const drawer = $("#drawer");
 $("#btn-settings").onclick = () => drawer.classList.add("open");
 $("#btn-close-settings").onclick = () => drawer.classList.remove("open");
-drawer.onclick = (e) => e.target === drawer && drawer.classList.remove("open");
+drawer.onclick = (e) => {
+  if (e.target === drawer) drawer.classList.remove("open");
+};
 document.addEventListener("keydown", (e) => e.key === "Escape" && drawer.classList.remove("open"));
 
 $("#s-dir-pick").onclick = async () => {
@@ -1484,7 +1488,9 @@ function applyTheme(t) {
   $("#btn-theme use").setAttribute("href", isDark() ? "#i-sun" : "#i-moon");
   $("#btn-theme").title = isDark() ? "Passer en mode clair" : "Passer en mode sombre";
 }
-$("#s-theme").onclick = (e) => e.target.dataset.v && applyTheme(e.target.dataset.v);
+$("#s-theme").onclick = (e) => {
+  if (e.target.dataset.v) applyTheme(e.target.dataset.v);
+};
 $("#btn-theme").onclick = () => applyTheme(isDark() ? "light" : "dark");
 darkQuery.addEventListener("change", () => applyTheme(theme));
 applyTheme(theme);
@@ -1803,7 +1809,9 @@ async function openMerge() {
 }
 $("#lib-artists").onclick = openMerge;
 $("#merge-close").onclick = () => $("#merge").classList.add("hidden");
-$("#merge").onclick = (e) => e.target.id === "merge" && $("#merge").classList.add("hidden");
+$("#merge").onclick = (e) => {
+  if (e.target.id === "merge") $("#merge").classList.add("hidden");
+};
 document.addEventListener("keydown", (e) => e.key === "Escape" && $("#merge").classList.add("hidden"));
 
 // ---------- Fond animé aux couleurs de la pochette ----------
@@ -2221,8 +2229,137 @@ async function openMyPlaylists() {
   }
 }
 $("#btn-myplaylists").onclick = openMyPlaylists;
+
+// ---------- Mes likes : titres likés Spotify et SoundCloud, à télécharger au choix ----------
+
+let likes = [];
+let likesSrc = "all";
+let likesShown = [];
+const likesSel = new Set();
+const normT = (x) =>
+  (x || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[([].*?[)\]]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+// Déjà dans la bibliothèque : même titre (et même artiste quand on le connaît).
+function likeOwned(x) {
+  const t = normT(x.title), a = normT((x.artist || "").split(/,| & | feat/)[0]);
+  return library.some((l) => normT(l.title) === t && (!a || !l.artist || normT(l.artist).includes(a) || a.includes(normT(l.artist))));
+}
+
+async function openLikes() {
+  $("#likes").classList.remove("hidden");
+  if (!libLoaded) loadLibrary();
+  // Le cache d'abord (instantané), puis la liste à jour.
+  if (!likes.length) {
+    const cached = await invoke("ext_tracks").catch(() => []);
+    likes = (cached || []).filter((x) => x.from === "Titres likés" || x.from === "Likes SoundCloud");
+  }
+  renderLikes("Mise à jour de tes likes…");
+  try {
+    const r = await invoke("likes_fetch");
+    likes = r.tracks;
+    renderLikes(r.errors.join(" · "));
+  } catch (e) {
+    renderLikes(String(e), true);
+  }
+}
+
+function renderLikes(status = "", isErr = false) {
+  const st = $("#lk-status");
+  st.textContent = status;
+  st.classList.toggle("err-text", isErr);
+  for (const b of $("#lk-src").children) b.classList.toggle("on", b.dataset.v === likesSrc);
+  const q = normT($("#lk-q").value);
+  const onlyNew = $("#lk-new").checked;
+  const rows = likes.filter(
+    (x) => (likesSrc === "all" || x.source === likesSrc) && (!q || normT(x.title + " " + x.artist).includes(q)) && !(onlyNew && likeOwned(x))
+  );
+  likesShown = rows.slice(0, 500);
+  const ul = $("#lk-list");
+  ul.replaceChildren();
+  if (!rows.length) {
+    const li = document.createElement("li");
+    li.className = "muted lk-empty";
+    li.textContent = likes.length ? "Aucun titre ne correspond." : status ? "" : "Aucun like trouvé.";
+    ul.append(li);
+  }
+  const frag = document.createDocumentFragment();
+  for (const x of rows.slice(0, 500)) {
+    const li = document.createElement("li");
+    const owned = likeOwned(x);
+    li.className = "lk-row" + (owned ? " owned" : "");
+    li.innerHTML = `<input type="checkbox" />
+      <span class="mp-cover"><svg><use href="#i-note"/></svg><img alt=""/></span>
+      <span class="mp-meta"><b></b><small></small></span>
+      <svg class="lk-src"><use href="#i-${x.source === "soundcloud" ? "soundcloud" : "spotify"}"/></svg>
+      <button class="ghost small"><svg><use href="#i-arrow"/></svg><span>Télécharger</span></button>`;
+    li.querySelector("b").textContent = x.title;
+    li.querySelector("small").textContent = [x.artist, x.bpm && Math.round(x.bpm) + " BPM", x.key, owned && "déjà dans ta bibliothèque"].filter(Boolean).join(" · ");
+    if (x.cover) setImg(li.querySelector("img"), x.cover);
+    const cb = li.querySelector("input");
+    cb.checked = likesSel.has(x.id);
+    cb.onchange = () => {
+      cb.checked ? likesSel.add(x.id) : likesSel.delete(x.id);
+      likesCount();
+    };
+    li.querySelector("button").onclick = () => downloadLikes([x]);
+    frag.append(li);
+  }
+  ul.append(frag);
+  if (rows.length > 500) {
+    const li = document.createElement("li");
+    li.className = "muted small lk-empty";
+    li.textContent = `${rows.length - 500} autres : affine la recherche.`;
+    ul.append(li);
+  }
+  likesCount(rows.length);
+}
+
+function likesCount(shown) {
+  const n = likesSel.size;
+  $("#lk-dl").disabled = !n;
+  $("#lk-dl span").textContent = n ? `Télécharger la sélection (${n})` : "Télécharger la sélection";
+  if (shown != null) $("#lk-count").textContent = `${shown} titre${shown > 1 ? "s" : ""}`;
+}
+
+async function downloadLikes(list, force = false) {
+  try {
+    const r = await invoke("likes_download", { tracks: list, force });
+    if (r.skipped && !r.added) {
+      const what = r.skipped === 1 ? `« ${r.skipped_titles[0] || list[0].title} » est déjà dans ta bibliothèque` : `Ces ${r.skipped} titres sont déjà dans ta bibliothèque`;
+      return toastAction(what, "Télécharger quand même", () => downloadLikes(list, true));
+    }
+    toast(`${r.added} titre${r.added > 1 ? "s" : ""} en file${r.skipped ? `, ${r.skipped} déjà présent${r.skipped > 1 ? "s" : ""}` : ""}`);
+    for (const x of list) likesSel.delete(x.id);
+    likesCount();
+    renderLikes($("#lk-status").textContent);
+  } catch (e) {
+    toast(String(e), true);
+  }
+}
+
+$("#btn-likes").onclick = openLikes;
+$("#lk-close").onclick = () => $("#likes").classList.add("hidden");
+// (Corps entre accolades : un « false » renvoyé par onclick annulerait le clic sur les cases.)
+$("#likes").onclick = (e) => {
+  if (e.target.id === "likes") $("#likes").classList.add("hidden");
+};
+document.addEventListener("keydown", (e) => e.key === "Escape" && $("#likes").classList.add("hidden"));
+$("#lk-src").onclick = (e) => {
+  const v = e.target.closest("button")?.dataset.v;
+  if (v) (likesSrc = v), renderLikes($("#lk-status").textContent);
+};
+$("#lk-q").oninput = () => renderLikes($("#lk-status").textContent);
+$("#lk-new").onchange = () => renderLikes($("#lk-status").textContent);
+$("#lk-all").onclick = () => {
+  const shown = likesShown;
+  const all = shown.every((x) => likesSel.has(x.id));
+  for (const x of shown) all ? likesSel.delete(x.id) : likesSel.add(x.id);
+  renderLikes($("#lk-status").textContent);
+};
+$("#lk-dl").onclick = () => downloadLikes(likes.filter((x) => likesSel.has(x.id)));
 $("#mp-close").onclick = () => $("#myplaylists").classList.add("hidden");
-$("#myplaylists").onclick = (e) => e.target.id === "myplaylists" && $("#myplaylists").classList.add("hidden");
+$("#myplaylists").onclick = (e) => {
+  if (e.target.id === "myplaylists") $("#myplaylists").classList.add("hidden");
+};
 document.addEventListener("keydown", (e) => e.key === "Escape" && $("#myplaylists").classList.add("hidden"));
 
 // ---------- Démarrage ----------

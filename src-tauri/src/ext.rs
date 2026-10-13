@@ -35,7 +35,14 @@ pub struct ExtTrack {
     /// D'où il vient (« Titres likés », nom de playlist…).
     #[serde(default)]
     pub from: String,
+    #[serde(default)]
+    pub album: Option<String>,
+    #[serde(default)]
+    pub cover: Option<String>,
 }
+
+pub const SPOTIFY_LIKES: &str = "Titres likés";
+pub const SOUNDCLOUD_LIKES: &str = "Likes SoundCloud";
 
 pub struct Ext {
     file: PathBuf,
@@ -88,6 +95,9 @@ fn merged(old: &[ExtTrack], fresh: Vec<ExtTrack>) -> Vec<ExtTrack> {
         .filter(|t| seen.insert(t.id.clone()))
         .map(|mut t| {
             if let Some(o) = known.get(t.id.as_str()) {
+                if t.from != SPOTIFY_LIKES && (o.from == SPOTIFY_LIKES || o.from == SOUNDCLOUD_LIKES) {
+                    t.from = o.from.clone();
+                }
                 t.bpm = o.bpm;
                 t.key = o.key.clone();
                 t.looked = o.looked;
@@ -117,7 +127,87 @@ fn ext_track(r: sources::TrackRequest, from: &str) -> Option<ExtTrack> {
         key: None,
         looked: false,
         from: from.to_string(),
+        album: r.meta.album,
+        cover: r.meta.cover,
     })
+}
+
+impl ExtTrack {
+    /// Demande de téléchargement (comme si le lien avait été collé).
+    pub fn request(&self) -> sources::TrackRequest {
+        sources::TrackRequest {
+            source: self.source,
+            // Spotify : pas de lien direct, l'audio est cherché d'après les métadonnées.
+            url: if self.source == sources::Source::Spotify { String::new() } else { self.url.clone() },
+            key: self.id.clone(),
+            meta: sources::Meta {
+                title: Some(self.title.clone()),
+                artist: Some(self.artist.clone()).filter(|a| !a.is_empty()),
+                album: self.album.clone(),
+                duration: self.duration,
+                cover: self.cover.clone(),
+                genre: None,
+            },
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct Likes {
+    pub tracks: Vec<ExtTrack>,
+    pub errors: Vec<String>,
+}
+
+/// Titres likés (Spotify) et likes SoundCloud, dans l'ordre des sources (récents d'abord).
+/// Garde en cache, sans toucher aux titres venus des playlists.
+pub async fn likes(app: &AppHandle) -> Result<Likes, String> {
+    let sc_user = app.state::<crate::AppState>().settings.lock().unwrap().soundcloud_user.clone();
+    let sc = soundcloud_likes(&sc_user);
+    if !crate::spotify::connected() && sc.is_none() {
+        return Err("Connecte Spotify (Réglages › Comptes) ou indique ton profil SoundCloud dans les réglages".into());
+    }
+    let mut tracks = Vec::new();
+    let mut errors = Vec::new();
+    if crate::spotify::connected() {
+        match crate::spotify::resolve("https://open.spotify.com/collection/tracks").await {
+            Some(Ok(r)) => tracks.extend(r.tracks.into_iter().filter_map(|t| ext_track(t, SPOTIFY_LIKES))),
+            Some(Err(e)) => errors.push(format!("Spotify : {e}")),
+            None => errors.push("Spotify : non connecté".into()),
+        }
+    }
+    if let Some(url) = sc {
+        match tools::locate(app) {
+            Some(t) => match sources::resolve(&t, &url).await {
+                Ok(r) => tracks.extend(r.tracks.into_iter().filter_map(|t| ext_track(t, SOUNDCLOUD_LIKES))),
+                Err(e) => errors.push(format!("SoundCloud : {e}")),
+            },
+            None => errors.push("SoundCloud : yt-dlp n'est pas installé".into()),
+        }
+    }
+    if tracks.is_empty() && !errors.is_empty() {
+        return Err(errors.join(" · "));
+    }
+    let ext = app.state::<Ext>();
+    {
+        let mut cur = ext.tracks.lock().unwrap();
+        upsert(&mut cur, &mut tracks);
+    }
+    ext.save();
+    Ok(Likes { tracks, errors })
+}
+
+/// Ajoute les nouveaux, met à jour les connus ; `fresh` récupère BPM et clé déjà trouvés.
+fn upsert(cur: &mut Vec<ExtTrack>, fresh: &mut [ExtTrack]) {
+    for f in fresh.iter_mut() {
+        if let Some(c) = cur.iter_mut().find(|c| c.id == f.id) {
+            f.bpm = c.bpm;
+            f.key = c.key.clone();
+            f.looked = c.looked;
+            *c = f.clone();
+        } else {
+            cur.push(f.clone());
+        }
+    }
 }
 
 /// Lien des likes SoundCloud à partir d'un nom de profil ou d'un lien.
@@ -258,6 +348,20 @@ mod tests {
         assert_eq!(m.len(), 2);
         assert_eq!((m[0].bpm, m[0].looked, m[0].from.as_str()), (Some(126.0), true, "y"));
         assert!(!m[1].looked);
+    }
+
+    #[test]
+    fn upsert_keeps_playlists_and_lookups() {
+        let mut a = ext_track(req("spotify:track:a", "", "A"), "Ma playlist").unwrap();
+        a.bpm = Some(124.0);
+        let mut cur = vec![a, ext_track(req("spotify:track:p", "", "P"), "Ma playlist").unwrap()];
+        let mut fresh = vec![ext_track(req("spotify:track:a", "", "A"), SPOTIFY_LIKES).unwrap(), ext_track(req("spotify:track:n", "", "N"), SPOTIFY_LIKES).unwrap()];
+        upsert(&mut cur, &mut fresh);
+        assert_eq!(cur.len(), 3);
+        assert_eq!(fresh[0].bpm, Some(124.0));
+        assert_eq!(cur[0].from, SPOTIFY_LIKES);
+        let r = fresh[0].request();
+        assert_eq!((r.url.as_str(), r.key.as_str(), r.meta.title.as_deref()), ("", "spotify:track:a", Some("A")));
     }
 
     #[test]
