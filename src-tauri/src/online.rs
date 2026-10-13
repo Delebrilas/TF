@@ -115,6 +115,33 @@ pub async fn deezer(artist: &str, title: &str, duration: Option<f64>) -> Option<
     None
 }
 
+/// Extrait de 30 s (MP3) proposé par Deezer pour ce titre, sans compte.
+pub async fn deezer_preview(artist: &str, title: &str, duration: Option<f64>) -> Option<String> {
+    let a = first_artist(artist);
+    let t = base_title(title);
+    for q in [format!("artist:\"{a}\" track:\"{t}\""), format!("{a} {t}")] {
+        let url = format!("https://api.deezer.com/search?q={}", urlencoding::encode(&q));
+        let Ok(resp) = http().get(&url).send().await else { continue };
+        let Ok(v) = resp.json::<Value>().await else { continue };
+        if let Some(p) = pick_preview(&v, &a, &t, duration) {
+            return Some(p);
+        }
+    }
+    None
+}
+
+fn pick_preview(v: &Value, a: &str, t: &str, duration: Option<f64>) -> Option<String> {
+    v["data"].as_array()?.iter().find_map(|it| {
+        let ok = similar(it["title"].as_str().unwrap_or(""), t)
+            && similar(it.pointer("/artist/name").and_then(Value::as_str).unwrap_or(""), a)
+            && match (duration, it["duration"].as_f64()) {
+                (Some(d), Some(x)) => (d - x).abs() <= 15.0,
+                _ => true,
+            };
+        it["preview"].as_str().filter(|p| ok && p.starts_with("https://")).map(String::from)
+    })
+}
+
 /// iTunes Search : pochette 1400 px et genre, sans clé.
 pub async fn itunes(artist: &str, title: &str, duration: Option<f64>) -> Option<ItunesInfo> {
     let a = first_artist(artist);
@@ -231,6 +258,16 @@ fn round(b: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn picks_deezer_preview() {
+        let v = serde_json::json!({"data":[
+            {"title":"Strobe (Radio Edit)","duration":200,"preview":"https://cdns-preview/x.mp3","artist":{"name":"deadmau5"}},
+            {"title":"Strobe","duration":634,"preview":"https://cdns-preview/y.mp3","artist":{"name":"deadmau5"}},
+            {"title":"Strobe","duration":634,"preview":"","artist":{"name":"Autre"}}]});
+        assert_eq!(pick_preview(&v, "deadmau5", "Strobe", Some(630.0)).as_deref(), Some("https://cdns-preview/y.mp3"));
+        assert_eq!(pick_preview(&v, "Inconnu", "Strobe", None), None);
+    }
 
     #[test]
     fn reads_getsongbpm_song() {

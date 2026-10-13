@@ -861,7 +861,7 @@ button.icon.sp { color: var(--spotify); }
 .lk-hide { font-size: 12px; color: var(--muted); display: inline-flex; gap: 6px; align-items: center; }
 .lk-status { min-height: 16px; margin-bottom: 4px; }
 .lk-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; max-height: 52vh; }
-.lk-row { display: grid; grid-template-columns: auto 40px minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 6px 8px; border-radius: 10px; }
+.lk-row { display: grid; grid-template-columns: auto auto 40px minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 6px 8px; border-radius: 10px; }
 .lk-row:hover { background: var(--card-hover); }
 .lk-row .mp-cover { width: 40px; height: 40px; }
 .lk-row.owned .mp-meta b { color: var(--muted); }
@@ -870,3 +870,7 @@ button.icon.sp { color: var(--spotify); }
 .lk-foot { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
 .lk-foot #lk-count { flex: 1; }
 #lk-from { max-width: 240px; height: 34px; background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 0 8px; font: inherit; font-size: 13px; }
+.lk-row.playing { background: rgba(124,92,255,.12); }
+.lk-row.playing .lk-play, .lk-row.loading .lk-play { color: var(--accent); }
+.lk-row.loading .lk-play svg { animation: lk-pulse 1s ease-in-out infinite; }
+@keyframes lk-pulse { 50% { opacity: .3; } }

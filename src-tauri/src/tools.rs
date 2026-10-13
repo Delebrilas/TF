@@ -39,6 +39,12 @@ impl Tools {
         c
     }
 
+    /// ffmpeg (celui de l'app, sinon celui du système).
+    pub fn ffmpeg(&self) -> tokio::process::Command {
+        let p = self.ffmpeg_dir.as_ref().map(|d| d.join(exe("ffmpeg"))).unwrap_or_else(|| PathBuf::from("ffmpeg"));
+        command(&p)
+    }
+
     /// Même outil sans les cookies (navigateur absent ou base illisible).
     pub fn without_cookies(&self) -> Self {
         Self { cookies: vec![], ..self.clone() }

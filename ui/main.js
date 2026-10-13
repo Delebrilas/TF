@@ -2333,7 +2333,9 @@ function renderLikes(status = "", isErr = false) {
     const li = document.createElement("li");
     const owned = likeOwned(x);
     li.className = "lk-row" + (owned ? " owned" : "");
+    li.dataset.id = x.id;
     li.innerHTML = `<input type="checkbox" />
+      <button class="icon sm lk-play" title="Écouter un extrait (30 s)"><svg><use href="#i-play"/></svg></button>
       <span class="mp-cover"><svg><use href="#i-note"/></svg><img alt=""/></span>
       <span class="mp-meta"><b></b><small></small></span>
       <svg class="lk-src"><use href="#i-${x.source === "soundcloud" ? "soundcloud" : "spotify"}"/></svg>
@@ -2347,7 +2349,9 @@ function renderLikes(status = "", isErr = false) {
       cb.checked ? likesSel.add(x.id) : likesSel.delete(x.id);
       likesCount();
     };
-    li.querySelector("button").onclick = () => downloadLikes([x]);
+    li.querySelector("button:not(.lk-play)").onclick = () => downloadLikes([x]);
+    li.querySelector(".lk-play").onclick = () => likePreview(x);
+    if (lkPlaying?.id === x.id) li.classList.add(lkPlaying.loading ? "loading" : "playing");
     frag.append(li);
   }
   ul.append(frag);
@@ -2367,6 +2371,45 @@ function likesCount(shown) {
   if (shown != null) $("#lk-count").textContent = `${shown} titre${shown > 1 ? "s" : ""}`;
 }
 
+// Aperçu : extrait Deezer, sinon 30 s du milieu (SoundCloud ou YouTube), préparé par l'app.
+const lkAudio = new Audio();
+let lkPlaying = null;
+function lkMark() {
+  for (const li of document.querySelectorAll("#lk-list .lk-row")) {
+    const on = lkPlaying?.id === li.dataset.id;
+    li.classList.toggle("loading", on && lkPlaying.loading);
+    li.classList.toggle("playing", on && !lkPlaying.loading);
+    li.querySelector(".lk-play use").setAttribute("href", on && !lkPlaying.loading ? "#i-pause" : "#i-play");
+  }
+}
+function stopLikePreview() {
+  lkAudio.pause();
+  if (lkAudio.src) URL.revokeObjectURL(lkAudio.src);
+  lkAudio.removeAttribute("src");
+  lkPlaying = null;
+  lkMark();
+}
+lkAudio.onended = stopLikePreview;
+async function likePreview(x) {
+  if (lkPlaying?.id === x.id) return stopLikePreview();
+  stopLikePreview();
+  const me = (lkPlaying = { id: x.id, loading: true });
+  lkMark();
+  try {
+    const bytes = await invoke("like_preview", { track: x });
+    if (lkPlaying !== me) return;
+    const ab = bytes instanceof ArrayBuffer ? bytes : new Uint8Array(bytes).buffer;
+    if (typeof audio !== "undefined" && !audio.paused) audio.pause();
+    lkAudio.src = URL.createObjectURL(new Blob([ab], { type: "audio/mpeg" }));
+    await lkAudio.play();
+    me.loading = false;
+    lkMark();
+  } catch (e) {
+    if (lkPlaying === me) stopLikePreview();
+    toast(String(e), true);
+  }
+}
+
 async function downloadLikes(list, force = false) {
   try {
     const r = await invoke("likes_download", { tracks: list, force });
@@ -2384,12 +2427,18 @@ async function downloadLikes(list, force = false) {
 }
 
 $("#btn-likes").onclick = openLikes;
-$("#lk-close").onclick = () => $("#likes").classList.add("hidden");
+const closeLikes = () => {
+  $("#likes").classList.add("hidden");
+  stopLikePreview();
+};
+$("#lk-close").onclick = closeLikes;
 // (Corps entre accolades : un « false » renvoyé par onclick annulerait le clic sur les cases.)
 $("#likes").onclick = (e) => {
-  if (e.target.id === "likes") $("#likes").classList.add("hidden");
+  if (e.target.id === "likes") closeLikes();
 };
-document.addEventListener("keydown", (e) => e.key === "Escape" && $("#likes").classList.add("hidden"));
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("#likes").classList.contains("hidden")) closeLikes();
+});
 $("#lk-src").onclick = (e) => {
   const v = e.target.closest("button")?.dataset.v;
   if (v) (likesSrc = v), renderLikes($("#lk-status").textContent);

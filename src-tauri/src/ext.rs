@@ -262,6 +262,68 @@ pub async fn playlist_tracks(app: &AppHandle, url: &str, name: &str) -> Result<V
     Ok(tracks)
 }
 
+/// Aperçu audio (MP3) : extrait Deezer si le titre y est, sinon 30 s prises
+/// vers le milieu du morceau sur SoundCloud (titre SoundCloud) ou YouTube.
+pub async fn preview(app: &AppHandle, t: &ExtTrack) -> Result<Vec<u8>, String> {
+    if let Some(hit) = PREVIEWS.lock().unwrap().iter().find(|(id, _)| id == &t.id) {
+        return Ok(hit.1.clone());
+    }
+    let mut data = None;
+    if t.source != sources::Source::Soundcloud {
+        if let Some(url) = online::deezer_preview(&t.artist, &t.title, t.duration).await {
+            if let Ok(r) = sources::http().get(&url).send().await {
+                data = r.bytes().await.ok().filter(|b| b.len() > 10_000).map(|b| b.to_vec());
+            }
+        }
+    }
+    let data = match data {
+        Some(d) => d,
+        None => {
+            let tools = tools::locate(app).ok_or("yt-dlp n'est pas installé")?;
+            let target = if t.source == sources::Source::Soundcloud {
+                t.url.clone()
+            } else {
+                format!("ytsearch1:{} {} audio", online::first_artist(&t.artist), t.title)
+            };
+            excerpt(&tools, &target).await?
+        }
+    };
+    let mut c = PREVIEWS.lock().unwrap();
+    c.retain(|(id, _)| id != &t.id);
+    c.push((t.id.clone(), data.clone()));
+    if c.len() > 12 {
+        c.remove(0);
+    }
+    Ok(data)
+}
+
+static PREVIEWS: Mutex<Vec<(String, Vec<u8>)>> = Mutex::new(Vec::new());
+
+/// 30 s en MP3 depuis le milieu du morceau (yt-dlp donne le flux, ffmpeg découpe).
+async fn excerpt(tools: &tools::Tools, target: &str) -> Result<Vec<u8>, String> {
+    let out = tools
+        .ytdlp()
+        .args(["-f", "bestaudio/best", "--no-playlist", "--no-warnings", "--print", "duration", "--print", "urls", target])
+        .output()
+        .await
+        .map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty());
+    let duration: f64 = lines.next().and_then(|d| d.parse().ok()).unwrap_or(0.0);
+    let url = lines.next().filter(|u| u.starts_with("http")).ok_or_else(|| format!("Aperçu indisponible : {}", sources::last_error(&out.stderr)))?;
+    let start = (duration * 0.4).min((duration - 32.0).max(0.0));
+    let out = tools
+        .ffmpeg()
+        .args(["-v", "error", "-ss", &format!("{start:.1}"), "-i", url, "-t", "30", "-vn", "-ac", "2", "-b:a", "128k", "-f", "mp3", "pipe:1"])
+        .output()
+        .await
+        .map_err(|e| format!("ffmpeg : {e}"))?;
+    if out.stdout.len() < 10_000 {
+        return Err(format!("Aperçu indisponible : {}", String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("flux illisible")));
+    }
+    Ok(out.stdout)
+}
+
 /// Ajoute les nouveaux, met à jour les connus ; `fresh` récupère BPM et clé déjà trouvés.
 fn upsert(cur: &mut Vec<ExtTrack>, fresh: &mut [ExtTrack]) {
     for f in fresh.iter_mut() {
@@ -428,6 +490,17 @@ mod tests {
         assert_eq!(cur[0].from, SPOTIFY_LIKES);
         let r = fresh[0].request();
         assert_eq!((r.url.as_str(), r.key.as_str(), r.meta.title.as_deref()), ("", "spotify:track:a", Some("A")));
+    }
+
+    /// TF_PREVIEW_URL=http://127.0.0.1:8766/x.mp3 cargo test excerpt -- --ignored
+    #[test]
+    #[ignore]
+    fn excerpt_cuts_thirty_seconds() {
+        let url = std::env::var("TF_PREVIEW_URL").unwrap();
+        let t = tools::Tools { ytdlp: "yt-dlp".into(), ffmpeg_dir: None, extra: vec![], cookies: vec![] };
+        let mp3 = tokio::runtime::Runtime::new().unwrap().block_on(excerpt(&t, &url)).unwrap();
+        // 30 s à 128 kb/s ≈ 480 Ko.
+        assert!((400_000..560_000).contains(&mp3.len()), "{}", mp3.len());
     }
 
     #[test]

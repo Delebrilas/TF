@@ -324,6 +324,12 @@ async fn playlist_tracks(app: AppHandle, url: String, name: String) -> CmdResult
     ext::playlist_tracks(&app, &url, &name).await
 }
 
+/// Aperçu audio d'un titre pas encore téléchargé (MP3 de ~30 s).
+#[tauri::command]
+async fn like_preview(app: AppHandle, track: ext::ExtTrack) -> CmdResult<tauri::ipc::Response> {
+    ext::preview(&app, &track).await.map(tauri::ipc::Response::new)
+}
+
 /// Télécharge les likes choisis, un par un (les déjà présents sont ignorés, sauf `force`).
 #[tauri::command]
 async fn likes_download(app: AppHandle, tracks: Vec<ext::ExtTrack>, force: Option<bool>) -> CmdResult<AddResult> {
@@ -589,6 +595,7 @@ pub fn run() {
             likes_download,
             my_playlists,
             playlist_tracks,
+            like_preview,
             ext_refresh
         ])
         .run(tauri::generate_context!())
