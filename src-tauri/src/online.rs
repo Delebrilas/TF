@@ -369,6 +369,25 @@ mod tests {
 
     #[tokio::test]
     #[ignore]
+    async fn net_discover_steps() {
+        let a = deezer_json("search/artist?q=Justice&limit=1").await;
+        println!("search étape artiste: {}", a.as_ref().map(|v| v["data"][0].to_string().chars().take(120).collect::<String>()).unwrap_or("rien".into()));
+        let id = a.and_then(|v| v["data"][0]["id"].as_u64()).unwrap_or(0);
+        let r = deezer_json(&format!("artist/{id}/related?limit=8")).await;
+        println!("search étape related: {}", r.as_ref().map(|v| v.to_string().chars().take(200).collect::<String>()).unwrap_or("rien".into()));
+        let q = urlencoding::encode("artist:\"Daft Punk\" bpm_min:\"110\" bpm_max:\"130\"").into_owned();
+        let sr = deezer_json(&format!("search?q={q}&limit=6")).await;
+        println!("search étape bpm: {}", sr.as_ref().map(|v| v.to_string().chars().take(200).collect::<String>()).unwrap_or("rien".into()));
+        let top = deezer_json(&format!("artist/{id}/top?limit=5")).await;
+        let ids: Vec<u64> = top.map(|v| v["data"].as_array().cloned().unwrap_or_default().iter().filter_map(|t| t["id"].as_u64()).collect()).unwrap_or_default();
+        for t in ids {
+            let f = deezer_json(&format!("track/{t}")).await;
+            println!("search étape track: {:?}", f.map(|v| (v["title"].to_string(), v["bpm"].to_string())));
+        }
+    }
+
+    #[tokio::test]
+    #[ignore]
     async fn net_discover_reply() {
         let f = discover(&["Daft Punk".into(), "Justice".into()], 115.0, 130.0, 12).await;
         for x in &f {
