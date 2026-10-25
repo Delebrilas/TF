@@ -47,6 +47,7 @@
     <symbol id="i-star" viewBox="0 0 24 24"><path fill="currentColor" d="m12 2.8 2.8 5.8 6.3.9-4.6 4.4 1.1 6.3L12 17.2l-5.6 3 1.1-6.3-4.6-4.4 6.3-.9z"/></symbol>
     <symbol id="i-cue" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M6 4v16M10 12l9-7v14z"/></symbol>
     <symbol id="i-sync" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M20 11a8 8 0 0 0-14.3-4.9L4 8M4 4v4h4M4 13a8 8 0 0 0 14.3 4.9L20 16M20 20v-4h-4"/></symbol>
+    <symbol id="i-cast" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3 8V6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6M3 12a8 8 0 0 1 8 8M3 16a4 4 0 0 1 4 4M3 20h.01"/></symbol>
     <symbol id="i-csv" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M12 11v6M9 14l3 3 3-3"/></symbol>
     <symbol id="i-pen" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="m20 20-3.5-3.5"/></symbol>
@@ -276,6 +277,7 @@
       <button class="icon sm" id="p-suggest" title="Morceaux à enchaîner (clé et BPM compatibles)"><svg><use href="#i-mix"/></svg></button>
       <button class="icon sm" id="p-mute" title="Muet"><svg><use href="#i-volume"/></svg></button>
       <input type="range" id="p-vol" min="0" max="100" value="80" />
+      <button class="icon sm" id="p-cast" title="Caster sur la télé"><svg><use href="#i-cast"/></svg></button>
       <button class="icon sm" id="p-expand" title="Visualiseur plein écran"><svg><use href="#i-expand"/></svg></button>
     </div>
   </footer>
@@ -444,6 +446,11 @@
       <div class="toggle">
         <button type="button" class="switch" role="switch" data-ux="compat"></button>
         <span><b>Jauge de compatibilité</b><small>Dans la bibliothèque, chaque titre montre s'il s'enchaîne bien avec celui qui joue.</small></span>
+      </div>
+
+      <div class="toggle">
+        <button type="button" class="switch" role="switch" data-ux="cast"></button>
+        <span><b>Cast vers la télé</b><small>Bouton dans le lecteur pour envoyer la musique sur une télé du Wi-Fi (Samsung, LG, Sony… en DLNA).</small></span>
       </div>
 
       <div class="toggle">
@@ -671,5 +678,6 @@
   <script src="dj.js"></script>
   <script src="gps.js"></script>
   <script src="ux.js"></script>
+  <script src="cast.js"></script>
 </body>
 </html>

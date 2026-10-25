@@ -1,6 +1,7 @@
 mod artwork;
 mod backup;
 mod bpm;
+mod cast;
 mod clipboard;
 mod desk;
 mod diag;
@@ -563,6 +564,38 @@ fn library_roots(s: &settings::Settings) -> Vec<(String, std::path::PathBuf)> {
     roots
 }
 
+/// Télés du réseau compatibles DLNA (Samsung, LG, Sony…).
+#[tauri::command]
+async fn cast_discover() -> Vec<cast::Tv> {
+    cast::discover().await
+}
+
+/// Envoie le morceau à la télé.
+#[tauri::command]
+async fn cast_play(control: String, path: String, title: String, artist: String, duration: Option<f64>, start: Option<f64>) -> CmdResult<()> {
+    let p = path.clone();
+    let cover = tauri::async_runtime::spawn_blocking(move || library::cover(std::path::Path::new(&p))).await.ok().flatten();
+    cast::play(&control, cast::Media { path, title, artist, duration, cover }, start).await.map_err(err)
+}
+
+/// pause, play, stop ou seek (avec `at`).
+#[tauri::command]
+async fn cast_control(control: String, action: String, at: Option<f64>) -> CmdResult<()> {
+    match action.as_str() {
+        "pause" => cast::pause(&control).await,
+        "play" => cast::resume(&control).await,
+        "stop" => cast::stop(&control).await,
+        "seek" => cast::seek(&control, at.unwrap_or(0.0)).await,
+        _ => Err(anyhow::anyhow!("action inconnue")),
+    }
+    .map_err(err)
+}
+
+#[tauri::command]
+async fn cast_status(control: String) -> CmdResult<cast::Status> {
+    cast::status(&control).await.map_err(err)
+}
+
 #[tauri::command]
 async fn cover_art(path: String) -> CmdResult<tauri::ipc::Response> {
     let data = tauri::async_runtime::spawn_blocking(move || library::cover(std::path::Path::new(&path)))
@@ -724,6 +757,10 @@ pub fn run() {
             apply_bpm,
             save_settings,
             beat_grid,
+            cast_discover,
+            cast_play,
+            cast_control,
+            cast_status,
             gps_export_fl,
             cached_grids,
             notes_get,

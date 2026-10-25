@@ -1094,6 +1094,7 @@ function markPlaying() {
 
 let actx = null;
 let analyser = null;
+let outGain = null;
 let freq = null;
 let wave = null;
 let beatInterval = 0;
@@ -1109,7 +1110,9 @@ function ensureAudioGraph() {
     analyser.fftSize = 2048;
     analyser.smoothingTimeConstant = 0.78;
     src.connect(analyser);
-    analyser.connect(actx.destination);
+    // Sortie coupée pendant un cast : le visualiseur continue, le son part sur la télé.
+    outGain = actx.createGain();
+    analyser.connect(outGain).connect(actx.destination);
     freq = new Uint8Array(analyser.frequencyBinCount);
     wave = new Uint8Array(analyser.fftSize);
     requestAnimationFrame(draw);

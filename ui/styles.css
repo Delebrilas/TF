@@ -982,3 +982,9 @@ body.disco { animation: disco 1.2s linear infinite; }
 .brand img.scratch { animation: scratch 1s cubic-bezier(.3,.7,.4,1); }
 @keyframes scratch { 25% { transform: rotate(-200deg); } 50% { transform: rotate(160deg); } 75% { transform: rotate(-90deg); } 100% { transform: rotate(720deg); } }
 @media (prefers-reduced-motion: reduce) { body.disco { animation: none; } }
+
+/* ---------- Cast vers la télé ---------- */
+#p-cast.active { color: var(--accent); }
+#p-cast.searching svg { animation: cast-wave 1s ease-in-out infinite; }
+@keyframes cast-wave { 50% { opacity: .35; } }
+#p-artist[data-cast]:not([data-cast=""])::after { content: " · " attr(data-cast); color: var(--accent); }

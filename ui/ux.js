@@ -4,7 +4,7 @@
 // (Réglages), gardé dans localStorage « tf-ui ».
 
 (() => {
-const UX_DEFAULTS = { fx: true, hoverCard: true, compat: true, eggs: true };
+const UX_DEFAULTS = { fx: true, hoverCard: true, compat: true, eggs: true, cast: true };
 let ux = { ...UX_DEFAULTS };
 try { ux = { ...UX_DEFAULTS, ...JSON.parse(localStorage.getItem("tf-ui") || "{}") }; } catch {}
 const saveUx = () => { try { localStorage.setItem("tf-ui", JSON.stringify(ux)); } catch {} };
@@ -23,6 +23,7 @@ for (const b of document.querySelectorAll("[data-ux]")) {
     sync();
     applyFx();
     if (k === "compat") compat();
+    window.castUi?.refresh();
     if (k === "hoverCard" && !ux.hoverCard) hideCard();
   });
 }
@@ -259,6 +260,6 @@ setInterval(() => {
   }
 }, 30000);
 
-window.ux = { afterLibrary: compat, compat };
+window.ux = { afterLibrary: compat, compat, get: (k) => ux[k] };
 compat();
 })();
